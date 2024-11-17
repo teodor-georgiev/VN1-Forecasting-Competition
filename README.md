@@ -1,2 +1,2 @@
 # VN1-Forecasting-Competition
-![Example Image](./Leaderboard.png)
+![Example Image](./Leaderboard.PNG)
