@@ -109,7 +109,7 @@ def build_predictor(model: str, device: str = "cpu") -> Callable[[np.ndarray], n
             MODEL_IDS[model], device_map=device, torch_dtype=dtype)
         def predict(batch: np.ndarray) -> np.ndarray:
             # Chronos-2 requires [n_series, n_variates, history_length], unlike Bolt.
-            context = torch.from_numpy(batch.astype(np.float32))[:, None, :]
+            context = torch.from_numpy(batch.astype(np.float32)[:, None, :])
             with torch.no_grad():
                 predictions = pipeline.predict(inputs=context, prediction_length=HORIZON,
                                                batch_size=len(batch))
