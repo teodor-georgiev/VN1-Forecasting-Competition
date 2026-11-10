@@ -285,7 +285,7 @@ def score(data_dir: Path, output_dir: Path) -> dict:
         for name in receipt["candidate_names"]:
             pred = np.asarray(data[name],dtype=np.float64)
             measures[name] = _metric(pred,y)
-            if name in ("incumbent","amsi_short30","phase0_selected","inactive26_annual_zero","inactive52_reallocate_client"):
+            if name in ("incumbent","amsi_short30","amsi_last30","phase0_selected","inactive26_annual_zero","inactive26_reallocate_global","inactive52_reallocate_client"):
                 weekly[name] = pred.sum(axis=0).tolist()
     result = {
         "phase": receipt["phase"],
