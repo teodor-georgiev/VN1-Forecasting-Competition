@@ -103,7 +103,7 @@ def test_ensemble_pipeline_uses_historical_selection_only():
     weights, names, result = choose_adaptive(hist, trees=4, theta_cap=0)
     assert result["heldout_origin"] == 144
     assert all(origin + HORIZON <= 157 for origin in result["cv_origins"])
-    assert result["selected_mode"] in ("global", "segment", "product")
+    assert result["selected_mode"] in ("champion", "global", "segment", "product")
     assert np.isfinite(weights).all()
     assert set(names) >= {"tweedie", "poisson", "sba", "tsb", "theta", "hierarchical"}
 
@@ -114,3 +114,13 @@ def test_optional_catboost_smoke():
     out = global_model_predictions(hist, trees=4, catboost=True)
     assert np.isfinite(out["catboost"]).all()
     assert out["catboost"].shape == (12, 13)
+
+
+def test_model_eligibility_keeps_dense_series_on_champion():
+    hist = example_history(n=12, weeks=100)
+    candidates, meta = forecast_candidates(hist, trees=5, theta_cap=0)
+    zero_fraction = (hist.iloc[:, 3:].to_numpy()[:, -52:] == 0).mean(axis=1)
+    dense = zero_fraction < 0.5
+    for model in ("sba", "tsb", "theta"):
+        np.testing.assert_allclose(candidates[model][dense], candidates["champion"][dense])
+    assert (candidates["poisson"] >= 0).all()
