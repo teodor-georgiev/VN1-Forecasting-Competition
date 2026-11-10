@@ -30,7 +30,7 @@ def test_feature_ablations_are_precise_and_historical():
         "baseline": ["Client", "Warehouse", "client_mean4", "warehouse_mean4"],
         "no_ids": ["client_mean4", "warehouse_mean4"],
         "no_group_stats": ["Client", "Warehouse"],
-        "no_ids_or_stats": ["statistical_baseline", "lag_1"],
+        "no_ids_or_stats": ["lag_1", "mean_13"],
         "interactions": ["Client", "Warehouse", "client_warehouse_id",
                          "client_warehouse_peer_mean13"],
     }
@@ -44,7 +44,8 @@ def test_feature_ablations_are_precise_and_historical():
         assert categories == categories2
         assert set(expected[variant]).issubset(X.columns)
         assert all(x in X.columns for x in categories)
-        if variant == "no_group_stats":
+        if variant in ("no_group_stats", "no_ids_or_stats"):
+            assert "statistical_baseline" not in X
             assert not any(c.startswith(("client_", "warehouse_", "product_")) for c in X)
         if variant == "no_ids_or_stats":
             assert not {"Client", "Warehouse", "client_mean4"}.intersection(X.columns)
