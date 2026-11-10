@@ -74,3 +74,68 @@ python vn1_lgbm_ensemble.py --phase 2 --output Submission_Phase_2_lgbm_ensemble.
 ```
 
 The CLI writes a correctly aligned submission and prints component scores separately. Override the historical blend weight using `--weight 0.5` when experimenting; the default `--weight` is selected through historical validation.
+
+
+## Research-only client/warehouse residual calibration and feature ablations
+
+Run the optional `vn1_residual_ablation.py` to measure whether a **bounded,
+hierarchically shrunk multiplicative bias adjustment** improves direct LightGBM
+forecasts. For every completed historical 13-week fold, a LightGBM model
+trains only on data at or before its forecast origin. Correction factors are
+estimated from *out-of-fold* errors, pooled by client and by warehouse, with
+explicit pseudo-volume priors (5,000 and 15,000 units) and a hard 10%
+correction limit. The model does **not** train independent per-client models,
+which would overfit sparse customers.
+
+Nested rolling validation fits the correction only on earlier folds before
+evaluating a held-out fold. It selects among fixed strengths `0, 0.5, 1.0`
+only when the pooled official VN1 metric improves by at least 0.005,
+the correction wins at least 60% of held-out folds (at least two wins),
+and no individual fold deteriorates by more than 0.02. **All forecast
+calendar months** require at least one matching month among the strictly
+historical held-out folds, plus improvement there; lacking this evidence
+keeps strength at zero. The month-matching safety rule was strengthened
+after observing the initial Phase 1 retrospective regression, so it must
+not be portrayed as independently pre-registered.
+
+The feature ablation compares five direct LightGBM variants on the same
+completed validation origins (default: two recent folds):
+
+| Variant | Features |
+|---|---|
+| `baseline` | Existing ID + group statistics + demand/calendar |
+| `no_ids` | Remove Client and Warehouse categorical IDs |
+| `no_group_stats` | Remove client, warehouse and product group statistics, including the client-pooled statistical baseline |
+| `no_ids_or_stats` | Per-series demand/calendar features only; no ID, peer aggregate or client-pooled statistical baseline |
+| `interactions` | Baseline + client×warehouse code and leave-one-out peer aggregates |
+
+Run locally on the official files:
+
+```bash
+python -m pip install -r requirements-vn1.txt
+python -m pytest -q test_vn1_residual_ablation.py
+python vn1_residual_ablation.py --phase 1 --trees 160
+python vn1_residual_ablation.py --phase 2 --trees 160
+```
+
+The GitHub CI workflow replays both phases and uploads JSON score receipts
+and forecast CSVs. **This is an isolated experiment: it does not alter
+`vn1_lgbm_ensemble.py`, the champion, or the default output.** Competition
+Phase 2 labels are retrospective evaluation data and are never used for
+selection or calibration. A better Phase 2 score alone is not grounds to
+promote this model without independent historical validation.
+
+
+### First retrospective experiment (before stronger seasonal guard)
+
+On the full published data with 160 trees, the initial correction's historical
+fold selection increased Phase 1 VN1 error from **0.580666** (plain LightGBM)
+to **0.630457**, and selected no correction for Phase 2, retaining **0.480170**.
+The previous validated champion remained better: Phase 1 **0.5389** and
+Phase 2 **0.477093**. These results motivated a stricter generic
+season-matching requirement; the final corrected replay is recorded in CI.
+
+Historical feature-ablation diagnostics also showed that omitting group
+statistics increases error materially. Client×warehouse interaction features
+were not a consistent winner over the existing baseline. No model or
+feature from this experiment is automatically promoted to the default.

@@ -1,0 +1,78 @@
+name: VN1 residual correction and categorical ablations
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-residual-ablation.yml"
+      - "vn1_residual_ablation.py"
+      - "test_vn1_residual_ablation.py"
+      - "vn1_lgbm_ensemble.py"
+      - "vn1_from_scratch.py"
+      - "requirements-vn1.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Historical leakage and end-to-end synthetic regression
+        run: python -m pytest -q test_vn1_residual_ablation.py test_vn1_lgbm_ensemble.py test_vn1_from_scratch.py
+
+  historical-replay:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Fetch published Phase 2 targets and validate Git blob hash
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from urllib.request import urlopen
+          revision = "281dccfa449442774690e9ad639a7d9405e6620c"
+          url = f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
+          with urlopen(url, timeout=45) as response:
+              payload = response.read()
+          blob = hashlib.sha1(b"blob " + str(len(payload)).encode() + bytes([0]) + payload).hexdigest()
+          assert blob == "714205238d3fcebe8a82b0cec97b28f375914d3b"
+          Path("Phase 2 - Sales.csv").write_bytes(payload)
+          PY
+      - name: Phase 1 residual corrections and five feature ablations
+        run: |
+          python -u vn1_residual_ablation.py --phase 1 --trees 160 \
+            --ablation-folds 2 --output Phase1_Residual.csv | tee Phase1_Residual_metrics.json
+      - name: Phase 2 residual corrections and five feature ablations
+        run: |
+          python -u vn1_residual_ablation.py --phase 2 --trees 160 \
+            --ablation-folds 2 --output Phase2_Residual.csv | tee Phase2_Residual_metrics.json
+      - name: Upload inspectable forecast and score receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-residual-ablation-replay
+          path: |
+            Phase1_Residual_metrics.json
+            Phase2_Residual_metrics.json
+            Phase1_Residual.csv
+            Phase2_Residual.csv
+          retention-days: 14
+          if-no-files-found: warn
