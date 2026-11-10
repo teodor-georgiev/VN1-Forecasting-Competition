@@ -109,7 +109,7 @@ def historical_origins(history: pd.DataFrame, max_folds: int = 6) -> list[int]:
     if max_folds < 3:
         raise ValueError("Need at least three rolling windows")
     periods = history.shape[1] - len(KEYS)
-    origins = list(range(104, periods - HORIZON + 1, HORIZON))
+    origins = list(range(105, periods - HORIZON + 1, HORIZON))
     if len(origins) < 3:
         raise ValueError("Need at least three completed historical windows")
     return origins[-max_folds:]
