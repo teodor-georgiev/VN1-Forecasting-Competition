@@ -259,6 +259,119 @@ def adaptive_weights(pred: np.ndarray, truth: np.ndarray, seg: np.ndarray,
             (1 - reliability[:, None]) * segment_w)
 
 
+
+def series_switch_weights(pred: np.ndarray, truth: np.ndarray,
+                          names: list[str], *, min_volume: float = 80.0,
+                          min_gain: float = 0.07) -> np.ndarray:
+    """Conservative per-series specialist selector using completed folds only.
+
+    A switch requires adequate historical sales, a >=7% pooled absolute-error
+    gain, and wins on at least 60% of completed folds (minimum two). Retain 25%
+    of the champion to limit product-level selection noise. Selection is based
+    on past labels exclusively, never on the fold being predicted.
+    """
+    if pred.ndim != 4 or truth.shape != pred.shape[:2] + pred.shape[3:]:
+        raise ValueError("Historical prediction / target shape mismatch")
+    if "champion" not in names or pred.shape[2] != len(names) or pred.shape[0] < 2:
+        raise ValueError("Need champion and at least two completed folds")
+    if not np.isfinite(pred).all() or not np.isfinite(truth).all():
+        raise ValueError("Nonfinite historical prediction / target")
+    folds, count, models, _ = pred.shape
+    champion = names.index("champion")
+    fold_errors = np.abs(pred - truth[:, :, None, :]).sum(axis=-1)
+    total_errors = fold_errors.sum(axis=0)
+    base_errors = total_errors[:, champion]
+    wins = (fold_errors < fold_errors[:, :, champion:champion + 1] - 1e-8).sum(axis=0)
+    sufficient_wins = max(2, int(np.ceil(0.6 * folds)))
+    volume = truth.sum(axis=(0, 2))
+    eligible = ((volume[:, None] >= min_volume) &
+                (base_errors[:, None] > 1e-8) &
+                (total_errors <= (1.0 - min_gain) * base_errors[:, None]) &
+                (wins >= sufficient_wins))
+    eligible[:, champion] = False
+    eligible_errors = np.where(eligible, total_errors, np.inf)
+    selected = np.argmin(eligible_errors, axis=1)
+    switch = np.isfinite(eligible_errors[np.arange(count), selected])
+    weights = np.zeros((count, models), dtype=np.float64)
+    weights[:, champion] = 1.0
+    rows = np.flatnonzero(switch)
+    weights[rows, champion] = 0.25
+    weights[rows, selected[rows]] = 0.75
+    return weights
+
+
+def rolling_origin_validation(pred: np.ndarray, truth: np.ndarray,
+                              origin_segments: np.ndarray,
+                              names: list[str], *,
+                              min_train_folds: int = 2,
+                              margin: float = 0.005) -> dict:
+    """Nested, expanding-window out-of-time comparison of adaptive modes.
+
+    At validation fold j, fit every selector on folds [0:j] and measure only
+    fold j. Aggregate the *official* score, including pooled signed bias.
+    A specialist must beat the champion by margin, win >=60% of validation
+    folds, and have no individual fold more than 0.02 worse. One historical
+    validation fold is diagnostic-only and cannot replace the champion.
+    """
+    if pred.ndim != 4 or truth.shape != pred.shape[:2] + pred.shape[3:]:
+        raise ValueError("Historical prediction / target shape mismatch")
+    if origin_segments.shape != pred.shape[:2]:
+        raise ValueError("Every fold needs a point-in-time segment vector")
+    if "champion" not in names or len(names) != pred.shape[2]:
+        raise ValueError("Model names must contain champion")
+    if min_train_folds < 2 or pred.shape[0] <= min_train_folds:
+        raise ValueError("Need at least one held-out fold after two training folds")
+    if not np.isfinite(pred).all() or not np.isfinite(truth).all():
+        raise ValueError("Nonfinite historical prediction / target")
+
+    modes = ("champion", "global", "segment", "product", "series_switch")
+    champion = names.index("champion")
+    totals = {mode: {"abs": 0.0, "bias": 0.0} for mode in modes}
+    folds = []
+    for j in range(min_train_folds, pred.shape[0]):
+        observed = truth[j]
+        volume = float(observed.sum())
+        if volume <= 0:
+            raise ValueError("Validation fold must have positive sales")
+        forecasts = {"champion": pred[j, :, champion, :]}
+        for mode in modes[1:]:
+            weights = (series_switch_weights(pred[:j], truth[:j], names)
+                       if mode == "series_switch" else
+                       adaptive_weights(pred[:j], truth[:j], origin_segments[j], mode))
+            forecasts[mode] = (pred[j] * weights[:, :, None]).sum(axis=1)
+        current = {"fold_index": j, "actual_sales": volume, "scores": {}}
+        for mode, values in forecasts.items():
+            residual = values - observed
+            absolute = float(np.abs(residual).sum())
+            bias = float(residual.sum())
+            totals[mode]["abs"] += absolute
+            totals[mode]["bias"] += bias
+            current["scores"][mode] = float((absolute + abs(bias)) / volume)
+        folds.append(current)
+
+    total_volume = float(sum(fold["actual_sales"] for fold in folds))
+    scores = {mode: float((v["abs"] + abs(v["bias"])) / total_volume)
+              for mode, v in totals.items()}
+    wins = {mode: sum(f["scores"][mode] < f["scores"]["champion"]
+                      for f in folds) for mode in modes}
+    max_regression = {mode: max(f["scores"][mode] - f["scores"]["champion"]
+                                for f in folds) for mode in modes}
+    required_wins = max(2, int(np.ceil(0.6 * len(folds))))
+    eligible = {mode: (len(folds) >= 2 and wins[mode] >= required_wins
+                       and max_regression[mode] <= 0.02)
+                for mode in modes[1:]}
+    selected = "champion"
+    for mode in modes[1:]:
+        if eligible[mode] and scores[mode] < scores[selected] - margin:
+            selected = mode
+    return {
+        "selected_mode": selected, "scores": scores, "folds": folds,
+        "wins": wins, "max_regression": max_regression,
+        "eligible": eligible, "min_margin": margin,
+        "min_train_folds": min_train_folds, "validation_folds": len(folds),
+    }
+
+
 def apply_weights(candidates: dict[str, np.ndarray], weights: np.ndarray,
                   names: list[str]) -> np.ndarray:
     stacked = np.stack([candidates[name] for name in names], axis=1)
@@ -274,14 +387,17 @@ def historical_folds(history: pd.DataFrame) -> list[int]:
 
 
 def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
-                    theta_cap: int = 250, catboost: bool = False) -> tuple[
+                    theta_cap: int = 250, catboost: bool = False,
+                    selector: str = "legacy") -> tuple[
                         np.ndarray, list[str], dict]:
-    """Use the last historical fold as a true holdout for blend complexity.
+    """Compare conservative legacy and nested rolling-origin selectors.
 
-    Fit weights on earlier folds only, compare modes on the last fold, then
-    refit the selected mode on all completed historical folds. Predictions for
-    the actual competition phase are NEVER used in this selection.
+    The historical candidate forecasts are shared between selectors. Legacy
+    remains the default; rolling is opt-in until public retrospective replays
+    and independent validation justify promotion. Phase labels are never read.
     """
+    if selector not in ("legacy", "rolling"):
+        raise ValueError("selector must be legacy or rolling")
     origins = historical_folds(history)
     names = list(MODELS) + (["catboost"] if catboost else [])
     all_pred, all_target, fold_details = [], [], []
@@ -295,6 +411,10 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
         fold_details.append({"origin_week": origin, **metadata})
     preds = np.stack(all_pred, axis=0)
     targets = np.stack(all_target, axis=0)
+    origin_segments = np.stack([
+        _segments(history.iloc[:, :len(KEYS) + origin]) for origin in origins
+    ])
+    rolling = rolling_origin_validation(preds, targets, origin_segments, names)
     last_fold_origin = origins[-1]
     prior_segments = _segments(history.iloc[:, :len(KEYS) + last_fold_origin])
     selection_scores = {}
@@ -316,6 +436,9 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
     for mode in ("global", "segment", "product"):
         if selection_scores[mode] < selection_scores[selected_mode] - 0.005:
             selected_mode = mode
+    legacy_mode = selected_mode
+    if selector == "rolling":
+        selected_mode = rolling["selected_mode"]
     # January is a distinct regime (the prior experiment failed after
     # selecting weights from autumn only). For January-origin forecasts,
     # also require a >=0.005 gain on a *chronologically earlier* January
@@ -339,9 +462,17 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
                 for mode in ("global", "segment", "product"):
                     w = adaptive_weights(preds[:season_idx], targets[:season_idx],
                                          season_segments, mode)
+                    
                     pred_season = (preds[season_idx] * w[:, :, None]).sum(axis=1)
                     e = pred_season - targets[season_idx]
                     seasonal_scores[mode] = float(
+                        (np.abs(e).sum() + abs(e.sum())) /
+                        max(targets[season_idx].sum(), 1.0))
+                if selector == "rolling":
+                    w = series_switch_weights(preds[:season_idx], targets[:season_idx], names)
+                    pred_season = (preds[season_idx] * w[:, :, None]).sum(axis=1)
+                    e = pred_season - targets[season_idx]
+                    seasonal_scores["series_switch"] = float(
                         (np.abs(e).sum() + abs(e.sum())) /
                         max(targets[season_idx].sum(), 1.0))
                 if (selected_mode != "champion" and
@@ -350,10 +481,14 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
     if selected_mode == "champion":
         final_weight = np.zeros((len(history), len(names)), dtype=np.float64)
         final_weight[:, names.index("champion")] = 1.0
+    elif selected_mode == "series_switch":
+        final_weight = series_switch_weights(preds, targets, names)
     else:
         final_weight = adaptive_weights(preds, targets, _segments(history), selected_mode)
     return final_weight, names, {
         "cv_origins": origins, "heldout_origin": last_fold_origin,
+        "selector": selector, "legacy_selected_mode": legacy_mode,
+        "rolling_validation": rolling,
         "heldout_scores": selection_scores, "seasonal_scores": seasonal_scores,
         "selected_mode": selected_mode,
         "historical_folds": fold_details, "number_of_models": len(names),
@@ -362,10 +497,12 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
 
 
 def run(phase: int, data_dir: Path, output: Path, *, trees: int = 160,
-        theta_cap: int = 250, catboost: bool = False) -> dict:
+        theta_cap: int = 250, catboost: bool = False,
+        selector: str = "legacy") -> dict:
     history = read_history(phase, data_dir)
     weight, names, selection = choose_adaptive(history, trees=trees,
-                                                theta_cap=theta_cap, catboost=catboost)
+                                                theta_cap=theta_cap, catboost=catboost,
+                                                selector=selector)
     candidate, metadata = forecast_candidates(history, trees=trees,
                                                theta_cap=theta_cap, catboost=catboost)
     values = apply_weights(candidate, weight, names)
@@ -397,12 +534,15 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--trees", type=int, default=160)
     parser.add_argument("--theta-cap", type=int, default=250)
+    parser.add_argument("--selector", choices=("legacy", "rolling"), default="legacy",
+                        help="Selection policy; rolling is experimental")
     parser.add_argument("--catboost", action="store_true",
                         help="Include optional CatBoost model (requires catboost package)")
     args = parser.parse_args()
     output = args.output or Path(f"Submission_Phase_{args.phase}_adaptive.csv")
     print(json.dumps(run(args.phase, args.data_dir, output, trees=args.trees,
-                         theta_cap=args.theta_cap, catboost=args.catboost), indent=2))
+                         theta_cap=args.theta_cap, catboost=args.catboost,
+                         selector=args.selector), indent=2))
 
 
 if __name__ == "__main__":
