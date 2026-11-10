@@ -136,6 +136,8 @@ def select_phase0(phase0: pd.DataFrame, trees: int) -> dict:
         fold_outputs.append((origin, preds, target, masks))
         print("VN1_RULE_FOLD_COMPLETE=" + str(origin), flush=True)
     total = sum(row[2].sum() for row in fold_outputs[:-1])
+    if total <= 0:
+        raise ValueError("No historical demand in calibration folds")
     scores = {}
     for name in POLICIES:
         err = np.concatenate([(p[name] - t).reshape(-1) for _, p, t, _ in fold_outputs[:-1]])
