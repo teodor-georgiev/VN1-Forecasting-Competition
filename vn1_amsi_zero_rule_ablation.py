@@ -272,6 +272,9 @@ def score(data_dir: Path, output_dir: Path) -> dict:
     actual = read_sales(data_dir / f"Phase {receipt['phase']} - Sales.csv")
     if len(actual) != receipt["series"]:
         raise ValueError("Unaligned actual rows")
+    history = read_history(receipt["phase"], data_dir)
+    if not actual[KEYS].equals(history[KEYS]):
+        raise ValueError("Phase targets do not align to frozen series keys")
     dates = list(actual.columns[3:])
     if dates != receipt["future_dates"]:
         raise ValueError("Target horizon mismatch")
