@@ -316,6 +316,37 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
     for mode in ("global", "segment", "product"):
         if selection_scores[mode] < selection_scores[selected_mode] - 0.005:
             selected_mode = mode
+    # January is a distinct regime (the prior experiment failed after
+    # selecting weights from autumn only). For January-origin forecasts,
+    # also require a >=0.005 gain on a *chronologically earlier* January
+    # fold, with weights trained on folds strictly before that year turn.
+    # This season-aware gate NEVER reads the Phase 2 evaluation labels.
+    seasonal_scores = None
+    if pd.Timestamp(history.columns[-1]).month == 1:
+        matching = [j for j, origin in enumerate(origins)
+                    if pd.Timestamp(history.columns[len(KEYS) + origin - 1]).month == 1]
+        if matching:
+            season_idx = matching[0]
+            if season_idx >= 2:
+                season_reference = history.iloc[:, :len(KEYS) + origins[season_idx]]
+                season_segments = _segments(season_reference)
+                seasonal_scores = {}
+                season_champion = preds[season_idx, :, names.index("champion"), :]
+                err = season_champion - targets[season_idx]
+                season_base = float((np.abs(err).sum() + abs(err.sum())) /
+                                    max(targets[season_idx].sum(), 1.0))
+                seasonal_scores["champion"] = season_base
+                for mode in ("global", "segment", "product"):
+                    w = adaptive_weights(preds[:season_idx], targets[:season_idx],
+                                         season_segments, mode)
+                    pred_season = (preds[season_idx] * w[:, :, None]).sum(axis=1)
+                    e = pred_season - targets[season_idx]
+                    seasonal_scores[mode] = float(
+                        (np.abs(e).sum() + abs(e.sum())) /
+                        max(targets[season_idx].sum(), 1.0))
+                if (selected_mode != "champion" and
+                        seasonal_scores[selected_mode] >= season_base - 0.005):
+                    selected_mode = "champion"
     if selected_mode == "champion":
         final_weight = np.zeros((len(history), len(names)), dtype=np.float64)
         final_weight[:, names.index("champion")] = 1.0
@@ -323,7 +354,8 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
         final_weight = adaptive_weights(preds, targets, _segments(history), selected_mode)
     return final_weight, names, {
         "cv_origins": origins, "heldout_origin": last_fold_origin,
-        "heldout_scores": selection_scores, "selected_mode": selected_mode,
+        "heldout_scores": selection_scores, "seasonal_scores": seasonal_scores,
+        "selected_mode": selected_mode,
         "historical_folds": fold_details, "number_of_models": len(names),
         "mean_weights": dict(zip(names, map(float, final_weight.mean(axis=0)))),
     }
