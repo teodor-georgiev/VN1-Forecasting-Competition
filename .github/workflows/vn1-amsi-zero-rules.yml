@@ -1,0 +1,35 @@
+name: VN1 AMSI and inactive-sales policy tests
+
+on:
+  pull_request:
+    paths:
+      - "vn1_amsi_specialists.py"
+      - "vn1_amsi_zero_rule_ablation.py"
+      - "test_vn1_amsi_zero_rule_ablation.py"
+      - ".github/workflows/vn1-amsi-zero-rules.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vn1-amsi-zero-rules-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install existing pinned dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Run deterministic, leakage and reallocation tests
+        run: python -m pytest -q test_vn1_amsi_zero_rule_ablation.py
