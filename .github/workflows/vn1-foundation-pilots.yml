@@ -1,0 +1,113 @@
+name: VN1 Chronos-2 TimesFM 2.5 zero-shot pilots
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-foundation-pilots.yml"
+      - "vn1_foundation_model_pilot.py"
+      - "test_vn1_foundation_model_pilot.py"
+      - "requirements-vn1-foundation-chronos.txt"
+      - "requirements-vn1-foundation-timesfm.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  adapter-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - run: python -m pip install -r requirements-vn1.txt
+      - run: python -m pytest -q test_vn1_foundation_model_pilot.py
+
+  chronos2-small:
+    needs: adapter-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-foundation-chronos.txt
+      - run: python -m pip install -r requirements-vn1-foundation-chronos.txt
+      - name: Verify published Phase 2 labels
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from urllib.request import urlopen
+          revision = "281dccfa449442774690e9ad639a7d9405e6620c"
+          url = f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
+          with urlopen(url, timeout=45) as response:
+              payload = response.read()
+          digest = hashlib.sha1(b"blob " + str(len(payload)).encode() + bytes([0]) + payload).hexdigest()
+          assert digest == "714205238d3fcebe8a82b0cec97b28f375914d3b"
+          Path("Phase 2 - Sales.csv").write_bytes(payload)
+          PY
+      - name: Historical Phase 1 and 2 Chronos-2 Small pilot
+        run: |
+          set -euo pipefail
+          python -u vn1_foundation_model_pilot.py --phase 1 --model chronos2-small \
+            --max-series 96 --batch-size 16 --output Phase1_Chronos2.csv | tee Phase1_Chronos2_metrics.json
+          python -u vn1_foundation_model_pilot.py --phase 2 --model chronos2-small \
+            --max-series 96 --batch-size 16 --output Phase2_Chronos2.csv | tee Phase2_Chronos2_metrics.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vn1-chronos2-small-pilot
+          path: |
+            Phase1_Chronos2_metrics.json
+            Phase2_Chronos2_metrics.json
+          if-no-files-found: error
+          retention-days: 21
+
+  timesfm25:
+    needs: adapter-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-foundation-timesfm.txt
+      - run: python -m pip install -r requirements-vn1-foundation-timesfm.txt
+      - name: Verify published Phase 2 labels
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from urllib.request import urlopen
+          revision = "281dccfa449442774690e9ad639a7d9405e6620c"
+          url = f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
+          with urlopen(url, timeout=45) as response:
+              payload = response.read()
+          digest = hashlib.sha1(b"blob " + str(len(payload)).encode() + bytes([0]) + payload).hexdigest()
+          assert digest == "714205238d3fcebe8a82b0cec97b28f375914d3b"
+          Path("Phase 2 - Sales.csv").write_bytes(payload)
+          PY
+      - name: Historical Phase 1 and 2 TimesFM 2.5 pilot
+        run: |
+          set -euo pipefail
+          python -u vn1_foundation_model_pilot.py --phase 1 --model timesfm2.5 \
+            --max-series 96 --batch-size 16 --output Phase1_TimesFM25.csv | tee Phase1_TimesFM25_metrics.json
+          python -u vn1_foundation_model_pilot.py --phase 2 --model timesfm2.5 \
+            --max-series 96 --batch-size 16 --output Phase2_TimesFM25.csv | tee Phase2_TimesFM25_metrics.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vn1-timesfm25-pilot
+          path: |
+            Phase1_TimesFM25_metrics.json
+            Phase2_TimesFM25_metrics.json
+          if-no-files-found: error
+          retention-days: 21
