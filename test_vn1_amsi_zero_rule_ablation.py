@@ -5,6 +5,7 @@ import pytest
 
 from vn1_amsi_zero_rule_ablation import (
     HORIZON, POLICIES, ORIGINS, _metric, candidates, rules, select_phase0,
+    rebalance_predictions,
 )
 
 
@@ -79,3 +80,21 @@ def test_vn1_metric_matches_absolute_error_plus_bias():
     assert _metric(pred,true) == pytest.approx(2.0)
     with pytest.raises(ValueError):
         _metric(pred, np.zeros_like(true))
+
+
+def test_rebalancing_keeps_total_and_uses_only_eligible_client():
+    baseline = np.array([[1] * HORIZON, [2] * HORIZON, [3] * HORIZON], dtype=float)
+    mask = np.array([True, False, False])
+    global_out = rebalance_predictions(baseline, mask)
+    client_out = rebalance_predictions(baseline, mask, np.array([1, 1, 2]))
+    assert np.all(global_out[0] == 0) and np.all(client_out[0] == 0)
+    assert np.allclose(global_out.sum(), baseline.sum())
+    assert np.allclose(client_out.sum(), baseline.sum())
+    np.testing.assert_array_equal(client_out[2], baseline[2])
+    assert np.all(client_out[1] == 3.0)
+    np.testing.assert_array_equal(
+        rebalance_predictions(baseline, np.array([False, False, False])), baseline)
+    np.testing.assert_array_equal(
+        rebalance_predictions(baseline, np.array([True, True, True])), baseline)
+    with pytest.raises(ValueError):
+        rebalance_predictions(baseline, mask, np.array([1, 2]))
