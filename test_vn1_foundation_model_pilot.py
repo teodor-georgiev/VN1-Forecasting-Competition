@@ -80,10 +80,11 @@ def test_chronos2_loader_contract(monkeypatch):
         def from_pretrained(cls, *a, **kw): return cls()
         def predict(self, inputs, prediction_length, batch_size):
             assert prediction_length == HORIZON and batch_size == 2
-            assert inputs.value.shape == (2, 65)
+            assert inputs.value.shape == (2, 1, 65)
             return [FakeTensor(np.ones((1, 9, HORIZON))) for _ in range(2)]
     torch = types.ModuleType("torch")
     torch.float32, torch.bfloat16 = "float32", "bfloat16"
+    torch.cuda = types.SimpleNamespace(is_available=lambda: False)
     torch.from_numpy = lambda x: FakeTensor(x)
     torch.no_grad = contextlib.nullcontext
     chronos = types.ModuleType("chronos")
@@ -112,3 +113,19 @@ def test_timesfm_25_contract(monkeypatch):
     monkeypatch.setitem(sys.modules, "timesfm", tfm)
     pred = build_predictor("timesfm2.5")(np.ones((2, 65), dtype=np.float32))
     assert pred.shape == (2, HORIZON)
+
+
+def test_cuda_is_required_for_full_catalogue(tmp_path):
+    from vn1_foundation_model_pilot import run
+    with pytest.raises(ValueError, match="Full-catalogue runs require explicit CUDA"):
+        run(1, "chronos2-small", tmp_path, tmp_path / "out.csv", max_series=0)
+
+
+def test_explicit_gpu_request_never_silently_falls_back(monkeypatch):
+    import sys, types
+    from vn1_foundation_model_pilot import build_predictor
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    with pytest.raises(RuntimeError, match="no NVIDIA GPU"):
+        build_predictor("timesfm2.5", device="cuda")
