@@ -58,7 +58,7 @@ def rules(history: pd.DataFrame) -> dict[str, np.ndarray]:
     # A warehouse identifier alone is NOT globally unique. Group by client+warehouse.
     # Require >=3 observed SKUs in the group and past activity before declaring closed.
     groups = pd.MultiIndex.from_frame(history[["Client", "Warehouse"]])
-    _, grp = np.unique(groups, return_inverse=True)
+    grp, _ = pd.factorize(groups, sort=True)
     counts = np.bincount(grp)
     group_recent = np.bincount(grp, weights=y[:, -26:].sum(axis=1))
     group_previous = np.bincount(grp, weights=y[:, -78:-26].sum(axis=1)) if y.shape[1] >= 78 else np.zeros(len(counts))
