@@ -190,6 +190,8 @@ def select_strength(ids: pd.DataFrame, forecasts: np.ndarray,
         raise ValueError("Nonfinite historical validation panel")
     if origin_dates is not None and len(origin_dates) != len(p):
         raise ValueError("origin_dates must align with historical folds")
+    if final_month is not None and not 1 <= final_month <= 12:
+        raise ValueError("final_month must be a valid calendar month")
     trials = {strength: [] for strength in STRENGTHS}
     for j in range(2, len(p)):
         f = group_correction(ids, p[:j], y[:j])
@@ -214,12 +216,12 @@ def select_strength(ids: pd.DataFrame, forecasts: np.ndarray,
         if (holdouts >= 2 and wins >= max(2, int(np.ceil(0.6 * holdouts)))
                 and worst_regression <= 0.02
                 and pooled[name] < pooled["0.0"] - min_gain):
-            if final_month == 1:
+            if final_month is not None:
                 if origin_dates is None:
                     continue
                 matching = [
                     j for j in range(2, len(p))
-                    if pd.Timestamp(origin_dates[j]).month == 1
+                    if pd.Timestamp(origin_dates[j]).month == final_month
                 ]
                 if not matching or not all(
                     current[j - 2] < baseline[j - 2] - min_gain
@@ -235,7 +237,7 @@ def select_strength(ids: pd.DataFrame, forecasts: np.ndarray,
         "number_of_holdouts": holdouts,
         "selection_only_historical": True,
         "min_gain": min_gain,
-        "january_gate": final_month == 1,
+        "seasonal_gate_month": final_month,
     }
 
 
