@@ -91,6 +91,13 @@ def build_predictor(model: str, device: str = "cpu") -> Callable[[np.ndarray], n
         raise ValueError("Only reviewed pretrained models are supported")
     if device not in ("cpu", "cuda", "mps"):
         raise ValueError("Unsupported device")
+    if device == "cuda":
+        try:
+            import torch
+        except ImportError as exc:
+            raise RuntimeError("CUDA requires the PyTorch GPU runtime") from exc
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested, but no NVIDIA GPU is available")
     if model.startswith("chronos2"):
         try:
             import torch
@@ -101,14 +108,15 @@ def build_predictor(model: str, device: str = "cpu") -> Callable[[np.ndarray], n
         pipeline = BaseChronosPipeline.from_pretrained(
             MODEL_IDS[model], device_map=device, torch_dtype=dtype)
         def predict(batch: np.ndarray) -> np.ndarray:
-            context = torch.from_numpy(batch.astype(np.float32))
+            # Chronos-2 requires [n_series, n_variates, history_length], unlike Bolt.
+            context = torch.from_numpy(batch.astype(np.float32))[:, None, :]
             with torch.no_grad():
                 predictions = pipeline.predict(inputs=context, prediction_length=HORIZON,
                                                batch_size=len(batch))
             return chronos2_median(predictions, len(batch))
         return predict
-    if device != "cpu":
-        raise ValueError("TimesFM 2.5 pilot runs on CPU only")
+    if device not in ("cpu", "cuda"):
+        raise ValueError("TimesFM 2.5 supports CPU or CUDA")
     try:
         import timesfm
     except ImportError as exc:
@@ -162,6 +170,8 @@ def pilot(history: pd.DataFrame, incumbent: pd.DataFrame,
 def run(phase: int, model: str, data_dir: Path, output: Path, *,
         max_series: int = 96, blend: float = 0.5,
         batch_size: int = 16, device: str = "cpu") -> dict:
+    if max_series == 0 and device != "cuda":
+        raise ValueError("Full-catalogue runs require explicit CUDA; no CPU fallback")
     history = read_history(phase, data_dir)
     chosen_weight = choose_weight(history)
     incumbent = ensemble_forecast(history, weight_lgbm=chosen_weight["weight_lgbm"])
@@ -174,7 +184,9 @@ def run(phase: int, model: str, data_dir: Path, output: Path, *,
         "phase": phase, "model": model, "checkpoint": MODEL_IDS[model],
         "selected_series": len(selection), "total_series": len(history),
         "blend": blend, "device": device,
-        "historical_selection": "only first 65 observed weeks",
+        "historical_selection": "all series" if max_series == 0 else "only first 65 observed weeks",
+        "full_catalogue": bool(len(selection) == len(history)),
+        "gpu_requested": bool(device == "cuda"),
         "incumbent_weight_cv": chosen_weight, "output": str(output),
         "warning": "Published Phase targets are retrospective evaluation only, not blind scores; pretrained data overlap cannot be ruled out",
     }
@@ -194,7 +206,8 @@ def main():
     parser.add_argument("--phase", choices=(1, 2), type=int, default=1)
     parser.add_argument("--data-dir", type=Path, default=Path("."))
     parser.add_argument("--output", type=Path, default=Path("VN1_Foundation_Model.csv"))
-    parser.add_argument("--max-series", type=int, default=96)
+    parser.add_argument("--max-series", type=int, default=96,
+                        help="Number of historically chosen series, or 0 for all (requires --device cuda)")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--blend", type=float, default=0.5)
     parser.add_argument("--device", choices=("cpu","cuda","mps"), default="cpu")
