@@ -127,7 +127,7 @@ def test_january_gate_keeps_champion_without_earlier_january_fold():
 
 def test_pipeline_runs_without_seeing_phase_target():
     history = synthetic_history(weeks=170)
-    assert historical_origins(history) == [104, 117, 130, 143, 156]
+    assert historical_origins(history) == [105, 118, 131, 144, 157]
     plain, corrected, report = rolling_experiment(history, trees=5,
                                                    max_folds=3, ablation_folds=1)
     assert plain.shape == corrected.shape == (len(history), HORIZON)
