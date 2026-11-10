@@ -85,8 +85,12 @@ def timesfm_point(values, expected_batch: int) -> np.ndarray:
     return np.maximum(0, arr)
 
 
-def build_predictor(model: str, device: str = "cpu") -> Callable[[np.ndarray], np.ndarray]:
+def build_predictor(
+    model: str, device: str = "cpu", *, batch_size: int | None = None,
+) -> Callable[[np.ndarray], np.ndarray]:
     """Download/load a reviewed pretrained checkpoint, with no remote code execution."""
+    if batch_size is not None and batch_size < 1:
+        raise ValueError("Batch size must be positive")
     if model not in MODEL_IDS:
         raise ValueError("Only reviewed pretrained models are supported")
     if device not in ("cpu", "cuda", "mps"):
@@ -125,9 +129,11 @@ def build_predictor(model: str, device: str = "cpu") -> Callable[[np.ndarray], n
         raise RuntimeError("Install requirements-vn1-foundation-timesfm.txt") from exc
     model_instance = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
         MODEL_IDS[model], force_download=False)
+    if batch_size is None:
+        batch_size = 4 if device == "cuda" else 16
     model_instance.compile(timesfm.ForecastConfig(
         max_context=512, max_horizon=HORIZON,
-        normalize_inputs=True, per_core_batch_size=4 if device == "cuda" else 16,
+        normalize_inputs=True, per_core_batch_size=batch_size,
         use_continuous_quantile_head=True, infer_is_positive=True,
     ))
     def predict(batch: np.ndarray) -> np.ndarray:
@@ -177,7 +183,7 @@ def run(phase: int, model: str, data_dir: Path, output: Path, *,
     history = read_history(phase, data_dir)
     chosen_weight = choose_weight(history)
     incumbent = ensemble_forecast(history, weight_lgbm=chosen_weight["weight_lgbm"])
-    infer = build_predictor(model, device=device)
+    infer = build_predictor(model, device=device, batch_size=batch_size)
     new, selection = pilot(history, incumbent, infer, max_series=max_series,
                            blend=blend, batch_size=batch_size)
     gpu_device_name = None
