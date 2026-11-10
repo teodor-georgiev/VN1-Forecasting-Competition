@@ -95,6 +95,28 @@ def test_chronos2_loader_contract(monkeypatch):
     assert predicted.shape == (2, HORIZON)
 
 
+
+@pytest.mark.parametrize("bf16_supported,expected_dtype", [(False, "float32"), (True, "bfloat16")])
+def test_chronos2_gpu_dtype_respects_older_cuda_devices(monkeypatch, bf16_supported, expected_dtype):
+    class FakePipeline:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            assert kwargs["device_map"] == "cuda"
+            assert kwargs["torch_dtype"] == expected_dtype
+            return cls()
+    torch = types.ModuleType("torch")
+    torch.float32, torch.bfloat16 = "float32", "bfloat16"
+    torch.cuda = types.SimpleNamespace(
+        is_available=lambda: True,
+        is_bf16_supported=lambda: bf16_supported,
+    )
+    chronos = types.ModuleType("chronos")
+    chronos.BaseChronosPipeline = FakePipeline
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "chronos", chronos)
+    build_predictor("chronos2-small", device="cuda")
+
+
 def test_timesfm_25_contract(monkeypatch):
     class FakeModel:
         @classmethod
