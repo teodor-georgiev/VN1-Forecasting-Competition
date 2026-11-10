@@ -117,8 +117,12 @@ def test_chronos2_gpu_dtype_respects_older_cuda_devices(monkeypatch, bf16_suppor
     build_predictor("chronos2-small", device="cuda")
 
 
-@pytest.mark.parametrize("device,core_batch", [("cpu", 16), ("cuda", 4)])
-def test_timesfm_25_contract(monkeypatch, device, core_batch):
+@pytest.mark.parametrize("device,batch_size,core_batch", [
+    ("cpu", None, 16),
+    ("cuda", None, 4),
+    ("cuda", 16, 16),
+])
+def test_timesfm_25_contract(monkeypatch, device, batch_size, core_batch):
     class FakeModel:
         @classmethod
         def from_pretrained(cls, model_id, force_download):
@@ -138,7 +142,8 @@ def test_timesfm_25_contract(monkeypatch, device, core_batch):
     fake_torch = types.ModuleType("torch")
     fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
-    pred = build_predictor("timesfm2.5", device=device)(np.ones((2, 65), dtype=np.float32))
+    predict = build_predictor("timesfm2.5", device=device, batch_size=batch_size)
+    pred = predict(np.ones((2, 65), dtype=np.float32))
     assert pred.shape == (2, HORIZON)
 
 
