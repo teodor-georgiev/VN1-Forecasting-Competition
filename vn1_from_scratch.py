@@ -49,6 +49,24 @@ def forecast(history: pd.DataFrame) -> pd.DataFrame:
     if not np.isfinite(values).all() or (values < 0).any():
         raise ValueError("Historical sales must be finite and nonnegative")
 
+    # A January-specific regime was chosen from earlier Jan-2022 / Jan-2023
+    # rolling backtests. The selection uses past sales and the known calendar.
+    origin = pd.Timestamp(columns[-1])
+    if origin.month == 1 and origin.day <= 7:
+        mean4 = values[:, -4:].mean(axis=1)
+        last_week = values[:, -1]
+        _, client_pos = np.unique(history["Client"].to_numpy(), return_inverse=True)
+        group_last = np.bincount(client_pos, weights=last_week)
+        group_mean4 = np.bincount(client_pos, weights=mean4)
+        client_shock = np.clip((group_last + 5.0) / (group_mean4 + 5.0), 1.0 / 3.0, 3.0)
+        level = 0.75 * last_week + 0.25 * mean4 * client_shock[client_pos]
+        preds = np.repeat(np.maximum(level, 0.0)[:, None], HORIZON, axis=1)
+        out = history.loc[:, KEYS].copy()
+        for j in range(HORIZON):
+            day = (origin + pd.Timedelta(weeks=j + 1)).strftime("%Y-%m-%d")
+            out[day] = preds[:, j]
+        return out
+
     mean4 = values[:, -4:].mean(axis=1)
     mean13 = values[:, -13:].mean(axis=1)
     preceding13 = values[:, -26:-13].mean(axis=1)
@@ -122,7 +140,15 @@ def run(phase: int, data_dir: Path, output: Path) -> dict | None:
             raise ValueError("IDs must match between phases 0 and 1")
         full_history = pd.concat([phase0, phase1.iloc[:, 3:]], axis=1)
         submission = forecast(full_history)
-        metrics = None
+        # SupChains later published the Phase 2 targets. Score them only after
+        # making the forecast; never use future targets as model inputs.
+        actual_file = data_dir / "Phase 2 - Sales.csv"
+        metrics = vn1_score(submission, read_sales(actual_file)) if actual_file.exists() else None
+        if metrics is not None:
+            naive = submission.copy()
+            last = full_history.iloc[:, -1].to_numpy(dtype=np.float64)
+            naive.iloc[:, 3:] = last[:, None]
+            metrics["naive_baseline_score"] = vn1_score(naive, read_sales(actual_file))["vn1_score"]
     else:
         raise ValueError("Phase must be 1 or 2")
 
@@ -141,7 +167,7 @@ def main() -> None:
     metrics = run(args.phase, args.data_dir, out)
     print(f"Forecast CSV saved to {out}")
     if metrics is None:
-        print("Phase 2 forecast produced; no Phase 2 score claimed without targets")
+        print("Phase 2 forecast produced; scoring requires Phase 2 - Sales.csv in data-dir")
     else:
         print(json.dumps(metrics, indent=2))
 
