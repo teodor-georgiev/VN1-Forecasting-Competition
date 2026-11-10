@@ -5,6 +5,7 @@ on:
       - ".github/workflows/vn1-specialists.yml"
       - "vn1_adaptive.py"
       - "test_vn1_adaptive.py"
+      - "test_vn1_rolling.py"
       - "requirements-vn1-specialists.txt"
       - "vn1_lgbm_ensemble.py"
       - "vn1_from_scratch.py"
@@ -27,7 +28,7 @@ jobs:
       - name: Install reproducible dependencies
         run: python -m pip install -r requirements-vn1-specialists.txt
       - name: Run synthetic, leakage and candidate-selection tests
-        run: python -m pytest -q test_vn1_adaptive.py test_vn1_lgbm_ensemble.py test_vn1_from_scratch.py
+        run: python -m pytest -q test_vn1_adaptive.py test_vn1_rolling.py test_vn1_lgbm_ensemble.py test_vn1_from_scratch.py
 
   replay:
     needs: tests
