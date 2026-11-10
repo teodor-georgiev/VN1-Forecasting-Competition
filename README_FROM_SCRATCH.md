@@ -91,9 +91,12 @@ Nested rolling validation fits the correction only on earlier folds before
 evaluating a held-out fold. It selects among fixed strengths `0, 0.5, 1.0`
 only when the pooled official VN1 metric improves by at least 0.005,
 the correction wins at least 60% of held-out folds (at least two wins),
-and no individual fold deteriorates by more than 0.02. January forecasts
-have an additional historical January validation gate; lacking a matching
-earlier January fold keeps strength at zero.
+and no individual fold deteriorates by more than 0.02. **All forecast
+calendar months** require at least one matching month among the strictly
+historical held-out folds, plus improvement there; lacking this evidence
+keeps strength at zero. The month-matching safety rule was strengthened
+after observing the initial Phase 1 retrospective regression, so it must
+not be portrayed as independently pre-registered.
 
 The feature ablation compares five direct LightGBM variants on the same
 completed validation origins (default: two recent folds):
@@ -121,3 +124,18 @@ and forecast CSVs. **This is an isolated experiment: it does not alter
 Phase 2 labels are retrospective evaluation data and are never used for
 selection or calibration. A better Phase 2 score alone is not grounds to
 promote this model without independent historical validation.
+
+
+### First retrospective experiment (before stronger seasonal guard)
+
+On the full published data with 160 trees, the initial correction's historical
+fold selection increased Phase 1 VN1 error from **0.580666** (plain LightGBM)
+to **0.630457**, and selected no correction for Phase 2, retaining **0.480170**.
+The previous validated champion remained better: Phase 1 **0.5389** and
+Phase 2 **0.477093**. These results motivated a stricter generic
+season-matching requirement; the final corrected replay is recorded in CI.
+
+Historical feature-ablation diagnostics also showed that omitting group
+statistics increases error materially. Client×warehouse interaction features
+were not a consistent winner over the existing baseline. No model or
+feature from this experiment is automatically promoted to the default.
