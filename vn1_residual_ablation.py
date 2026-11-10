@@ -69,7 +69,10 @@ def ablation_features(history: pd.DataFrame, origin: int,
         group_columns = [
             c for c in X if c.startswith(("client_", "warehouse_", "product_"))
         ]
-        # The statistical baseline itself contains client-pooled seasonal\n        # and January shock features, so it is also group information.\n        X = X.drop(columns=group_columns + ["statistical_baseline"])\n    if not np.isfinite(X.to_numpy(dtype=float)).all():
+        # The statistical baseline itself contains client-pooled seasonal
+        # and January shock features, so it is also group information.
+        X = X.drop(columns=group_columns + ["statistical_baseline"])
+    if not np.isfinite(X.to_numpy(dtype=float)).all():
         raise ValueError("Feature set contains nonfinite values")
     return X, categorical
 
