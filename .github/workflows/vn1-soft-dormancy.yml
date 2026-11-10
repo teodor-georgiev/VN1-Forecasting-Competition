@@ -4,6 +4,7 @@ on:
     paths:
       - "vn1_soft_dormancy.py"
       - "test_vn1_soft_dormancy.py"
+      - "docs/VN1_SOFT_DORMANCY_RESULTS.md"
       - ".github/workflows/vn1-soft-dormancy.yml"
   workflow_dispatch:
 
