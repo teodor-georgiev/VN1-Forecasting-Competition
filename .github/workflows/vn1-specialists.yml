@@ -60,11 +60,11 @@ jobs:
           PY
       - name: Phase 1 adaptive candidates and ensemble
         run: |
-          python -u vn1_adaptive.py --phase 1 --trees 60 --theta-cap 120 \
+          python -u vn1_adaptive.py --phase 1 --trees 160 --theta-cap 120 \
             --output Phase1_Adaptive.csv | tee Phase1_Adaptive_metrics.json
       - name: Phase 2 adaptive candidates and ensemble
         run: |
-          python -u vn1_adaptive.py --phase 2 --trees 60 --theta-cap 120 \
+          python -u vn1_adaptive.py --phase 2 --trees 160 --theta-cap 120 \
             --output Phase2_Adaptive.csv | tee Phase2_Adaptive_metrics.json
       - name: Upload score receipts and forecast CSVs
         if: always()
