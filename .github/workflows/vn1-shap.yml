@@ -1,0 +1,54 @@
+name: VN1 LightGBM SHAP analysis
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-shap.yml"
+      - "vn1_shap_analysis.py"
+      - "test_vn1_shap.py"
+      - "vn1_lgbm_ensemble.py"
+      - "requirements-vn1.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shap-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - run: python -m pip install -r requirements-vn1.txt
+      - run: python -m pytest -q test_vn1_shap.py
+
+  shap-report:
+    needs: shap-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - run: python -m pip install -r requirements-vn1.txt
+      - name: Explain out-of-sample phase 1 predictions without future labels
+        run: python vn1_shap_analysis.py --phase 1 --sample-rows 2000 --output Phase1_SHAP.json
+      - name: Explain phase 2 predictions using past phases only
+        run: python vn1_shap_analysis.py --phase 2 --sample-rows 2000 --output Phase2_SHAP.json
+      - name: Upload aggregate attribution receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-shap-feature-attributions
+          path: |
+            Phase1_SHAP.json
+            Phase2_SHAP.json
+          retention-days: 14
+          if-no-files-found: warn
