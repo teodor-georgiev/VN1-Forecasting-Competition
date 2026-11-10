@@ -104,7 +104,9 @@ def build_predictor(model: str, device: str = "cpu") -> Callable[[np.ndarray], n
             from chronos import BaseChronosPipeline
         except ImportError as exc:
             raise RuntimeError("Install requirements-vn1-foundation-chronos.txt") from exc
-        dtype = torch.float32 if device == "cpu" else torch.bfloat16
+        # Pascal-class GPUs (e.g. GTX 1060) do not support BF16; preserve FP32 there.
+        dtype = (torch.bfloat16 if device == "cuda" and torch.cuda.is_bf16_supported()
+                 else torch.float32)
         pipeline = BaseChronosPipeline.from_pretrained(
             MODEL_IDS[model], device_map=device, torch_dtype=dtype)
         def predict(batch: np.ndarray) -> np.ndarray:
