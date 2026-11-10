@@ -124,3 +124,17 @@ def test_model_eligibility_keeps_dense_series_on_champion():
     for model in ("sba", "tsb", "theta"):
         np.testing.assert_allclose(candidates[model][dense], candidates["champion"][dense])
     assert (candidates["poisson"] >= 0).all()
+
+
+def test_january_requires_season_matched_gate():
+    history = example_history(n=12, weeks=183)
+    weights, names, receipt = choose_adaptive(history, trees=3, theta_cap=0)
+    assert receipt["heldout_origin"] == 170
+    seasonal = receipt["seasonal_scores"]
+    assert seasonal is not None
+    assert set(seasonal) == {"champion", "global", "segment", "product"}
+    mode = receipt["selected_mode"]
+    if mode != "champion":
+        assert seasonal[mode] < seasonal["champion"] - 0.005
+    assert np.isfinite(weights).all()
+    np.testing.assert_allclose(weights.sum(axis=1), 1, atol=1e-7)
