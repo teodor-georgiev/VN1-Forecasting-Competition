@@ -89,3 +89,44 @@ def test_chronos_does_not_consume_unobserved_sales():
     predictions = predict_batched(measured, fake_predict, batch_size=3)
     assert predictions.shape == (8, HORIZON)
     assert all(batch.shape[1] == 150 for batch in seen)
+
+
+def test_real_loader_keyword_contract_without_downloading_weights(monkeypatch):
+    """Catch the previously hidden ChronosBoltPipeline.predict(context=...) error."""
+    import contextlib
+    import sys
+    import types
+    from vn1_chronos_bolt import load_chronos_predictor
+
+    class FakeTensor:
+        def __init__(self, values):
+            self.values = np.asarray(values)
+        def to(self, **kwargs):
+            return self
+        def detach(self):
+            return self
+        def cpu(self):
+            return self
+        def numpy(self):
+            return self.values
+
+    class FakePipeline:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            return cls()
+        def predict(self, inputs, prediction_length):
+            assert prediction_length == HORIZON
+            assert inputs.values.shape == (2, 60)
+            return FakeTensor(np.ones((2, 9, HORIZON)))
+
+    torch = types.ModuleType("torch")
+    torch.float32 = "float32"
+    torch.bfloat16 = "bfloat16"
+    torch.from_numpy = lambda values: FakeTensor(values)
+    torch.no_grad = contextlib.nullcontext
+    chronos = types.ModuleType("chronos")
+    chronos.BaseChronosPipeline = FakePipeline
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    monkeypatch.setitem(sys.modules, "chronos", chronos)
+    results = load_chronos_predictor()(np.zeros((2, 60), dtype=np.float32))
+    assert results.shape == (2, 9, HORIZON)
