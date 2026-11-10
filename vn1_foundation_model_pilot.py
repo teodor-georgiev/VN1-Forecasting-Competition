@@ -178,6 +178,14 @@ def run(phase: int, model: str, data_dir: Path, output: Path, *,
     infer = build_predictor(model, device=device)
     new, selection = pilot(history, incumbent, infer, max_series=max_series,
                            blend=blend, batch_size=batch_size)
+    gpu_device_name = None
+    gpu_peak_bytes = None
+    if device == "cuda":
+        import torch
+        gpu_device_name = torch.cuda.get_device_name(0)
+        gpu_peak_bytes = int(torch.cuda.max_memory_allocated(0))
+        if gpu_peak_bytes <= 0:
+            raise RuntimeError("GPU was requested but no CUDA allocations were observed")
     output.parent.mkdir(parents=True, exist_ok=True)
     new.to_csv(output, index=False)
     results = {
@@ -187,6 +195,9 @@ def run(phase: int, model: str, data_dir: Path, output: Path, *,
         "historical_selection": "all series" if max_series == 0 else "only first 65 observed weeks",
         "full_catalogue": bool(len(selection) == len(history)),
         "gpu_requested": bool(device == "cuda"),
+        "gpu_device_name": gpu_device_name,
+        "gpu_peak_allocated_bytes": gpu_peak_bytes,
+        "batch_size": batch_size,
         "incumbent_weight_cv": chosen_weight, "output": str(output),
         "warning": "Published Phase targets are retrospective evaluation only, not blind scores; pretrained data overlap cannot be ruled out",
     }
