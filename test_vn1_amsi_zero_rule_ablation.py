@@ -18,7 +18,7 @@ def synthetic():
     })
     sales = np.zeros((6, 170), dtype=float)
     sales[:3, 30:100] = 2  # Group 1 warehouse 10 closed, used to sell.
-    sales[3, -8:] = 3       # Same warehouse ID but another client's active group.
+    sales[3, -40:] = 3      # Same warehouse ID but another client's active group.
     sales[5, -52:-39] = 3  # Prior-year same-calendar activity protects this SKU.
     return pd.concat([ids, pd.DataFrame(sales, columns=columns)], axis=1)
 
