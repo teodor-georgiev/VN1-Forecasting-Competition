@@ -74,3 +74,29 @@ python vn1_lgbm_ensemble.py --phase 2 --output Submission_Phase_2_lgbm_ensemble.
 ```
 
 The CLI writes a correctly aligned submission and prints component scores separately. Override the historical blend weight using `--weight 0.5` when experimenting; the default `--weight` is selected through historical validation.
+
+
+## Experimental nested rolling-origin and per-series selection (2026-11-10)
+
+The optional `--selector rolling` comparison runs *expanding-window* model
+selection over completed historical 13-week windows. Each validation fold is
+forecast using weights fitted only on strictly earlier folds. It compares
+global, segment and product-level blends against the incumbent champion and
+a conservative per-series switch with minimum demand/consistency requirements.
+Across validation folds, candidates are compared with the **exact official
+VN1 score**, including aggregate signed bias. To deviate from the champion, a
+candidate must gain at least 0.005 in official score, win at least 60% of
+validation folds (minimum two), and avoid a fold-level regression over 0.02.
+January-origin forecasts retain an additional earlier-January seasonal gate.
+
+```bash
+python -m pytest -q test_vn1_rolling.py test_vn1_adaptive.py
+python vn1_adaptive.py --phase 1 --selector rolling --theta-cap 120
+python vn1_adaptive.py --phase 2 --selector rolling --theta-cap 120
+```
+
+**Default stays `--selector legacy`:** this research option does not change
+the validated champion or the main forecast until real-data replay evidence
+supports an improvement. The dedicated rolling benchmark CI workflow publishes
+per-phase scores and CSV artifacts. All Phase 2 comparisons are *retrospective*
+and must not be described as blind leaderboard validation.
