@@ -18,7 +18,7 @@ import pandas as pd
 from vn1_from_scratch import KEYS, HORIZON, forecast as statistical_forecast, read_sales, vn1_score
 from vn1_lgbm_ensemble import _features, _training_origins, LGBM_PARAMS, CATEGORICAL, read_history
 
-MODELS = ("statistical", "tweedie", "poisson", "sba", "tsb", "theta", "hierarchical")
+MODELS = ("champion", "statistical", "tweedie", "poisson", "sba", "tsb", "theta", "hierarchical")
 
 
 def intermittent_forecasts(history: pd.DataFrame, alpha: float = 0.1,
@@ -130,7 +130,7 @@ def _training_matrix(history: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray, l
 
 
 def global_model_predictions(history: pd.DataFrame, *,
-                             trees: int = 100, catboost: bool = False) -> dict[str, np.ndarray]:
+                             trees: int = 160, catboost: bool = False) -> dict[str, np.ndarray]:
     """Train global models on common fully observed origin/horizon examples."""
     X, y, _ = _training_matrix(history)
     future = _features(history, history.shape[1] - len(KEYS))
@@ -154,7 +154,7 @@ def global_model_predictions(history: pd.DataFrame, *,
     return preds
 
 
-def forecast_candidates(history: pd.DataFrame, *, trees: int = 100,
+def forecast_candidates(history: pd.DataFrame, *, trees: int = 160,
                         theta_cap: int = 250, catboost: bool = False
                         ) -> tuple[dict[str, np.ndarray], dict]:
     stat = statistical_forecast(history).iloc[:, len(KEYS):].to_numpy(dtype=float)
@@ -165,6 +165,26 @@ def forecast_candidates(history: pd.DataFrame, *, trees: int = 100,
         "hierarchical": hierarchical_forecast(history, stat),
     }
     candidates.update(global_model_predictions(history, trees=trees, catboost=catboost))
+    # Freeze the existing CV-selected champion's calendar policy. This is the
+    # control model, not a specialized candidate whose errors can be ignored.
+    origin_date = pd.Timestamp(history.columns[-1])
+    baseline_weight = 0.75 if origin_date.month == 1 and origin_date.day <= 7 else 1.0
+    champion = (baseline_weight * candidates["tweedie"] +
+                (1 - baseline_weight) * stat)
+    candidates["champion"] = champion
+    # Poisson can catastrophically overforecast rare high spikes. Never let a
+    # candidate exceed a history-derived physical plausibility ceiling.
+    sales = history.iloc[:, len(KEYS):].to_numpy(dtype=float)
+    max_recent = sales[:, -52:].max(axis=1)
+    avg_recent = sales[:, -13:].mean(axis=1)
+    cap = np.maximum(4.0, np.maximum(3.0 * max_recent, 8.0 * avg_recent))
+    candidates["poisson"] = np.minimum(candidates["poisson"], cap[:, None])
+    # Specialists may only deviate from the control where they're suitable;
+    # on other series they equal champion, avoiding accidental global damage.
+    zeros = (sales[:, -52:] == 0).mean(axis=1)
+    for specialist in ("sba", "tsb"):
+        candidates[specialist][zeros < 0.5] = champion[zeros < 0.5]
+    candidates["theta"][~mask] = champion[~mask]
     assert all(v.shape == (len(history), HORIZON)
                and np.isfinite(v).all() and (v >= 0).all() for v in candidates.values())
     return candidates, {"theta_fitted": int(mask.sum()), "num_series": len(history)}
@@ -194,7 +214,7 @@ def _as_submission(template: pd.DataFrame, values: np.ndarray) -> pd.DataFrame:
     return output
 
 
-def _softmax_losses(loss: np.ndarray, sharpness: float = 6.0) -> np.ndarray:
+def _softmax_losses(loss: np.ndarray, sharpness: float = 12.0) -> np.ndarray:
     raw = np.clip(-sharpness * loss, -90, 90)
     raw = raw - raw.max(axis=-1, keepdims=True)
     weight = np.exp(raw)
@@ -253,7 +273,7 @@ def historical_folds(history: pd.DataFrame) -> list[int]:
     return origins
 
 
-def choose_adaptive(history: pd.DataFrame, *, trees: int = 100,
+def choose_adaptive(history: pd.DataFrame, *, trees: int = 160,
                     theta_cap: int = 250, catboost: bool = False) -> tuple[
                         np.ndarray, list[str], dict]:
     """Use the last historical fold as a true holdout for blend complexity.
@@ -284,13 +304,23 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 100,
         errors = holdout - targets[-1]
         selection_scores[mode] = float((np.abs(errors).sum() + abs(errors.sum())) /
                                        max(targets[-1].sum(), 1.0))
-    # Honest holdout gate: favor simpler weights unless a more complex model
-    # improves VN1 by >0.002 absolute.
-    selected_mode = "global"
-    for mode in ("segment", "product"):
-        if selection_scores[mode] < selection_scores[selected_mode] - 0.002:
+    # Honest heldout gate: fall back to the prior champion if adaptive model
+    # doesn't win by a meaningful margin. The competition Phase 2 target is
+    # never used to choose the mode.
+    championship = preds[-1, :, names.index("champion"), :]
+    championship_error = championship - targets[-1]
+    selection_scores["champion"] = float(
+        (np.abs(championship_error).sum() + abs(championship_error.sum())) /
+        max(targets[-1].sum(), 1.0))
+    selected_mode = "champion"
+    for mode in ("global", "segment", "product"):
+        if selection_scores[mode] < selection_scores[selected_mode] - 0.005:
             selected_mode = mode
-    final_weight = adaptive_weights(preds, targets, _segments(history), selected_mode)
+    if selected_mode == "champion":
+        final_weight = np.zeros((len(history), len(names)), dtype=np.float64)
+        final_weight[:, names.index("champion")] = 1.0
+    else:
+        final_weight = adaptive_weights(preds, targets, _segments(history), selected_mode)
     return final_weight, names, {
         "cv_origins": origins, "heldout_origin": last_fold_origin,
         "heldout_scores": selection_scores, "selected_mode": selected_mode,
@@ -299,7 +329,7 @@ def choose_adaptive(history: pd.DataFrame, *, trees: int = 100,
     }
 
 
-def run(phase: int, data_dir: Path, output: Path, *, trees: int = 100,
+def run(phase: int, data_dir: Path, output: Path, *, trees: int = 160,
         theta_cap: int = 250, catboost: bool = False) -> dict:
     history = read_history(phase, data_dir)
     weight, names, selection = choose_adaptive(history, trees=trees,
@@ -333,7 +363,7 @@ def main() -> None:
     parser.add_argument("--phase", choices=(1, 2), type=int, default=1)
     parser.add_argument("--data-dir", type=Path, default=Path("."))
     parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--trees", type=int, default=100)
+    parser.add_argument("--trees", type=int, default=160)
     parser.add_argument("--theta-cap", type=int, default=250)
     parser.add_argument("--catboost", action="store_true",
                         help="Include optional CatBoost model (requires catboost package)")
