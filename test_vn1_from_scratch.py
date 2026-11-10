@@ -51,3 +51,16 @@ def test_future_truth_is_not_a_forecasting_input():
 def test_requires_65_weeks():
     with pytest.raises(ValueError, match="65"):
         forecast(example_history(weeks=40))
+
+
+def test_january_boundary_uses_only_available_weekly_history():
+    history = example_history(n=6, weeks=183)
+    dates = pd.date_range("2020-07-06", periods=183, freq="W-MON").strftime("%Y-%m-%d")
+    history.columns = KEYS + list(dates)
+    history.loc[:, dates[-4:]] = 10.0
+    history.loc[:, dates[-1]] = 2.0
+    pred = forecast(history)
+    assert pred.columns[-1] == "2024-04-01"
+    factor = (3 * 2 + 5) / (3 * 8 + 5)
+    expected = 0.75 * 2.0 + 0.25 * 8.0 * factor
+    assert np.allclose(pred.iloc[:, 3:].to_numpy(), expected)
