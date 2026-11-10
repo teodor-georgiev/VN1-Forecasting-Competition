@@ -56,6 +56,36 @@ Historical validation for \`inactive26_reallocate_global\`:
   \`inactive26_annual_zero\`; it failed holdout, so the frozen selection
   remained the incumbent.
 
+## Phase 1 versus Phase 2: season matters
+
+The *same frozen candidate definitions* were independently replayed against
+Phase 1 after selecting on the Phase 0 rolling folds. Phase 1 corresponds
+to the October-to-January holiday period; Phase 2 is January-to-April.
+These two phase targets were scored in their own separate \`score\` processes
+after freezing; they were not used to select policies.
+
+| Candidate | Phase 1 score | Phase 2 score |
+|:--|--:|--:|
+| Incumbent | 0.5806656337 | 0.4770926583 |
+| **Inactive 26w + annual guard, redistribute globally** | **0.5783498559** | **0.4758588214** |
+| Inactive 52w, redistribute globally | 0.5787410073 | 0.4759871010 |
+| Inactive 52w, redistribute within client | 0.5788521855 | 0.4760291417 |
+| AMSI last-week anchor, 30% blend | **0.5338301773** | 0.4824957579 |
+| AMSI short anchor, 30% blend | 0.5550314113 | 0.5255838712 |
+| Plain zero after 26w + season guard | 0.5738361962 | 0.4771543168 |
+| Warehouse closed 26w (hard zero) | 0.5805512496 | 0.4770950291 |
+
+This strengthens the business hypothesis that a zero-demand rule must preserve
+forecast volume, but it **does not make the candidate a new champion**. The
+redistribution idea was motivated by inspection of Phase 2 diagnostics and
+the original predeclared Phase 0 holdout gate still fails. A truly independent
+forward-period evaluation is required before promotion.
+
+AMSI's strong Phase 1 gain but Phase 2 regression makes a
+*seasonally validated policy* a better next hypothesis than a fixed 30% blend.
+Such a policy must be selected on multiple historical holiday/nonholiday folds,
+not hand-picked from these retrospective phase scores.
+
 ## Why plain zero suppression hurt the official score
 
 At the Phase 2 origin, 1,726 series had no sales in the previous 52 weeks.
