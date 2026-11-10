@@ -108,7 +108,7 @@ def load_chronos_predictor(model_id: str = DEFAULT_MODEL,
     def infer(batch: np.ndarray) -> np.ndarray:
         context = torch.from_numpy(batch).to(device=device, dtype=torch.float32)
         with torch.no_grad():
-            result = pipeline.predict(context=context, prediction_length=HORIZON)
+            result = pipeline.predict(inputs=context, prediction_length=HORIZON)
         return result.detach().cpu().numpy()
     return infer
 
