@@ -47,7 +47,7 @@ def test_historical_feature_and_label_boundary():
     changed = history.copy()
     changed.iloc[:, len(KEYS) + 131:] += 100000
     same = setup_cache(changed, selection, [105, 118, 131])
-    for origin in [65, 78, 91, 105, 118, 130, 131]:
+    for origin in [65, 78, 91, 104, 105, 117, 118, 131]:
         pd.testing.assert_frame_equal(cache["features"][origin], same["features"][origin])
 
 
@@ -66,6 +66,6 @@ def test_two_trial_optuna_smoke_with_disjoint_holdout():
 def test_vn1_scoring_matches_bias_adjusted_wape():
     actual = np.array([1, 3, 6.])
     predicted = np.array([2, 2, 5.])
-    assert score_vn1(predicted, actual) == pytest.approx(0.5)
+    assert score_vn1(predicted, actual) == pytest.approx(0.4)
     with pytest.raises(ValueError):
         score_vn1(np.array([1.]), actual)
