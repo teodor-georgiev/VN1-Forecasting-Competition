@@ -34,3 +34,43 @@ python vn1_from_scratch.py --phase 2 --data-dir . --output Submission_Phase_2_fr
 The original files `Phase 0 - Sales.csv` and `Phase 1 - Sales.csv` are in this repository. To independently verify the Phase 2 figure, place the organizer's released [`Phase 2 - Sales.csv`](https://github.com/SupChains/VN1/blob/main/Phase%202%20-%20Sales.csv) in the same directory. Phase 1 prints the official metric and MA12; Phase 2 prints the official metric and naive comparison when actuals exist. Without those labels, Phase 2 still writes the forecast and makes no claim of measured performance.
 
 Citation: Vandeput, N. (2024), *VN1 Forecasting – Accuracy Challenge*, SupChains. Data by Flieber. https://supchains.com/vn1-forecasting-competition/
+
+
+## LightGBM and historical-validated ensemble (2026-11-10)
+
+The separate `vn1_lgbm_ensemble.py` implements a **direct 13-horizon LightGBM Tweedie** model using sales lags, demand levels/trends, a same-week-prior-year signal, client/warehouse/product group demand statistics, and calendar indicators. Every training pair's target must lie at or before the model's training cutoff; feature construction slices history at its origin. Dependencies and versions are pinned in `requirements-vn1.txt`.
+
+The optional statistical/LightGBM ensemble uses
+
+`prediction = (weight_lgbm × LightGBM) + ((1 - weight_lgbm) × statistical)`.
+
+Mixing weight candidates `[0, 0.25, 0.5, 0.75, 1]` are compared using **season-matched historical backtests only**, **not** the phase target being scored. For the October-origin Phase 1 run, CV at week 117 selected `weight_lgbm=1.0`. For the January-origin Phase 2 run, CV at week 130 selected `weight_lgbm=0.75`. No Phase 2 target values were used in model training, feature preparation or ensemble weight selection.
+
+### Actual rerun on published competition data
+
+| Model | Phase 1 score ↓ | Phase 2 score ↓ |
+|---|---:|---:|
+| Existing statistical baseline | 56.2811% | 50.3016% |
+| **LightGBM alone** | **58.0666%** | **48.0170%** |
+| **Automatically weighted ensemble** | **58.0666%** (100% LGBM) | **47.7093%** (75% LGBM) |
+| VN1 winner (published) | — | 46.37% |
+| Organizer's naive benchmark | 68.82% | 50.70% |
+| Organizer's MA12 benchmark | 65.97% | 80.46% |
+
+The Phase 2 ensemble achieved **MAE 47.5514%** and **signed bias −0.1579%**, for a combined official metric of **47.7093%**. Phase 2 covers 13 weekly targets from 2024-01-08 to 2024-04-01, across 15,053 product series.
+
+**Qualification:** This is a retrospective replay on public actual sales, not an official leaderboard submission or an independent blind evaluation. The existing statistical model underwent earlier Phase 2 diagnostic work; results should not be mistaken for an untouched out-of-sample leaderboard rank. The ensemble's LightGBM weight was selected using earlier 2023 January data, not Phase 2 labels.
+
+**Verified CI:** [GitHub Actions real-data replay](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/42738809254) completed both jobs successfully (10 synthetic/leakage tests + official Phase 1/2 replay). Score receipts and forecast CSVs were uploaded in the `vn1-ensemble-replay` artifact. The official Phase 2 labels came from [SupChains/VN1](https://github.com/SupChains/VN1), pinned to revision `281dccfa449442774690e9ad639a7d9405e6620c`, with Git blob integrity verified.
+
+To rerun:
+
+```bash
+python -m pip install -r requirements-vn1.txt
+python -m pytest -q test_vn1_from_scratch.py test_vn1_lgbm_ensemble.py
+python vn1_lgbm_ensemble.py --phase 1 --output Submission_Phase_1_lgbm_ensemble.csv
+# For Phase 2, add official Phase 2 - Sales.csv from SupChains/VN1 to the data dir.
+python vn1_lgbm_ensemble.py --phase 2 --output Submission_Phase_2_lgbm_ensemble.csv
+```
+
+The CLI writes a correctly aligned submission and prints component scores separately. Override the historical blend weight using `--weight 0.5` when experimenting; the default `--weight` is selected through historical validation.
