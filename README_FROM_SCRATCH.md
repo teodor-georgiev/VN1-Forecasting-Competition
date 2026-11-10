@@ -102,8 +102,8 @@ completed validation origins (default: two recent folds):
 |---|---|
 | `baseline` | Existing ID + group statistics + demand/calendar |
 | `no_ids` | Remove Client and Warehouse categorical IDs |
-| `no_group_stats` | Remove client, warehouse and product group statistics |
-| `no_ids_or_stats` | Demand/calendar features only |
+| `no_group_stats` | Remove client, warehouse and product group statistics, including the client-pooled statistical baseline |
+| `no_ids_or_stats` | Per-series demand/calendar features only; no ID, peer aggregate or client-pooled statistical baseline |
 | `interactions` | Baseline + client×warehouse code and leave-one-out peer aggregates |
 
 Run locally on the official files:
