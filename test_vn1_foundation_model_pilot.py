@@ -117,7 +117,8 @@ def test_chronos2_gpu_dtype_respects_older_cuda_devices(monkeypatch, bf16_suppor
     build_predictor("chronos2-small", device="cuda")
 
 
-def test_timesfm_25_contract(monkeypatch):
+@pytest.mark.parametrize("device,core_batch", [("cpu", 16), ("cuda", 4)])
+def test_timesfm_25_contract(monkeypatch, device, core_batch):
     class FakeModel:
         @classmethod
         def from_pretrained(cls, model_id, force_download):
@@ -126,6 +127,7 @@ def test_timesfm_25_contract(monkeypatch):
             return cls()
         def compile(self, config):
             assert config["max_horizon"] == HORIZON
+            assert config["per_core_batch_size"] == core_batch
         def forecast(self, horizon, inputs):
             assert horizon == HORIZON and len(inputs) == 2
             return np.ones((2, HORIZON)), np.zeros((2, HORIZON, 10))
@@ -133,7 +135,10 @@ def test_timesfm_25_contract(monkeypatch):
     tfm.TimesFM_2p5_200M_torch = FakeModel
     tfm.ForecastConfig = lambda **kwargs: kwargs
     monkeypatch.setitem(sys.modules, "timesfm", tfm)
-    pred = build_predictor("timesfm2.5")(np.ones((2, 65), dtype=np.float32))
+    fake_torch = types.ModuleType("torch")
+    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: True)
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    pred = build_predictor("timesfm2.5", device=device)(np.ones((2, 65), dtype=np.float32))
     assert pred.shape == (2, HORIZON)
 
 
