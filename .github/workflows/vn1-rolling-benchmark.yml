@@ -47,7 +47,7 @@ jobs:
           url = f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
           with urlopen(url, timeout=45) as response:
               payload = response.read()
-          blob_sha = hashlib.sha1(f"blob {len(payload)}\\0".encode() + payload).hexdigest()
+          blob_sha = hashlib.sha1(b"blob " + str(len(payload)).encode() + bytes([0]) + payload).hexdigest()
           assert blob_sha == "714205238d3fcebe8a82b0cec97b28f375914d3b"
           Path("Phase 2 - Sales.csv").write_bytes(payload)
           PY
