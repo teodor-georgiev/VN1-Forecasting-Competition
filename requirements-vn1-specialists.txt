@@ -1,0 +1,3 @@
+-r requirements-vn1.txt
+statsforecast==2.1.1
+catboost==1.2.10
