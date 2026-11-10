@@ -54,11 +54,13 @@ jobs:
           PY
       - name: Phase 1 zero-shot pilot (192 stratified series)
         run: |
+          set -euo pipefail
           python -u vn1_chronos_bolt.py --phase 1 --model-id amazon/chronos-bolt-tiny \
             --max-series 192 --batch-size 32 --blend 0.5 \
             --output Phase1_Chronos.csv | tee Phase1_Chronos_metrics.json
       - name: Phase 2 zero-shot pilot (192 stratified series)
         run: |
+          set -euo pipefail
           python -u vn1_chronos_bolt.py --phase 2 --model-id amazon/chronos-bolt-tiny \
             --max-series 192 --batch-size 32 --blend 0.5 \
             --output Phase2_Chronos.csv | tee Phase2_Chronos_metrics.json
