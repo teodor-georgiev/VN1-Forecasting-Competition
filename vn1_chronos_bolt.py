@@ -46,12 +46,12 @@ def stratified_indices(history: pd.DataFrame, max_series: int,
     # Round-robin strata sampling, filling from available groups when sparse.
     while len(chosen) < max_series:
         any_remaining = False
-        for g in groups:
+        for group_index, g in enumerate(groups):
             if len(chosen) >= max_series:
                 break
             if len(g):
                 chosen.append(int(g[0]))
-                groups[groups.index(g)] = g[1:]
+                groups[group_index] = g[1:]
                 any_remaining = True
         if not any_remaining:
             break
