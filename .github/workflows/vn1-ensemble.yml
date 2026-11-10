@@ -1,0 +1,77 @@
+name: VN1 LightGBM ensemble checks
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-ensemble.yml"
+      - "vn1_lgbm_ensemble.py"
+      - "vn1_from_scratch.py"
+      - "test_vn1_lgbm_ensemble.py"
+      - "test_vn1_from_scratch.py"
+      - "README_FROM_SCRATCH.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Run all synthetic and leakage tests
+        run: python -m pytest -q test_vn1_from_scratch.py test_vn1_lgbm_ensemble.py
+
+  real-data-benchmark:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Fetch published Phase 2 labels at fixed source revision and verify Git blob SHA
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from urllib.request import urlopen
+          revision = "281dccfa449442774690e9ad639a7d9405e6620c"
+          url = f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
+          with urlopen(url, timeout=45) as r:
+              payload = r.read()
+          blob_sha = hashlib.sha1(f"blob {len(payload)}\0".encode() + payload).hexdigest()
+          assert blob_sha == "714205238d3fcebe8a82b0cec97b28f375914d3b", "Published Phase 2 data integrity check failed"
+          Path("Phase 2 - Sales.csv").write_bytes(payload)
+          print("Verified official Phase 2 data:", len(payload), "bytes, blob", blob_sha)
+          PY
+      - name: Score Phase 1 against official actuals
+        run: |
+          python vn1_lgbm_ensemble.py --phase 1 --output /tmp/Phase1_Ensemble.csv | tee Phase1_Ensemble_metrics.json
+      - name: Score Phase 2 against official actuals
+        run: |
+          python vn1_lgbm_ensemble.py --phase 2 --output /tmp/Phase2_Ensemble.csv | tee Phase2_Ensemble_metrics.json
+      - name: Upload reproducible score receipts and submissions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-ensemble-replay
+          path: |
+            Phase1_Ensemble_metrics.json
+            Phase2_Ensemble_metrics.json
+            /tmp/Phase1_Ensemble.csv
+            /tmp/Phase2_Ensemble.csv
+          if-no-files-found: warn
+          retention-days: 14
