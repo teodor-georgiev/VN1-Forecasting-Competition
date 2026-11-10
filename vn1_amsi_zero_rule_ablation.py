@@ -33,6 +33,10 @@ POLICIES = (
     "inactive26_annual_zero",
     "warehouse_closed26",
     "amsi_short30_and_inactive26",
+    "inactive52_reallocate_global",
+    "inactive26_reallocate_global",
+    "inactive52_reallocate_client",
+    "warehouse_closed26_reallocate_client",
 )
 MIN_GAIN = 0.001
 
@@ -83,6 +87,56 @@ def incumbent(history: pd.DataFrame, *, trees: int = 160) -> np.ndarray:
     return np.maximum(pred, 0)
 
 
+def rebalance_predictions(baseline: np.ndarray, mask: np.ndarray,
+                          group: np.ndarray | None = None) -> np.ndarray:
+    """Suppress likely dormant series, redistribute their mass without future data.
+
+    Preserve the *global total* of the original forecast so the VN1 bias
+    penalty remains unchanged. Distribution is proportional to non-suppressed
+    forecast mass, either globally or within the same client. If a client has
+    no recipient, its forecast mass is redistributed globally.
+    This is an exploratory post-Phase-2-diagnostic candidate, NOT blind tuning.
+    """
+    baseline = np.asarray(baseline, dtype=np.float64)
+    mask = np.asarray(mask, dtype=bool)
+    if baseline.ndim != 2 or baseline.shape[1] != HORIZON or mask.shape != (len(baseline),):
+        raise ValueError("Invalid rebalancing inputs")
+    if not np.isfinite(baseline).all() or (baseline < 0).any():
+        raise ValueError("Invalid baseline")
+    if not mask.any():
+        return baseline.copy()
+    recipient = ~mask
+    if not recipient.any() or baseline[recipient].sum() <= 0:
+        return baseline.copy()
+    result = baseline.copy()
+    result[mask] = 0
+    leftover = 0.0
+    if group is not None:
+        group = np.asarray(group)
+        if group.shape != mask.shape:
+            raise ValueError("Client groups must align to series")
+        codes, _ = pd.factorize(group, sort=True)
+        for g in np.unique(codes[mask]):
+            dropped = mask & (codes == g)
+            kept = recipient & (codes == g)
+            mass = float(baseline[dropped].sum())
+            denominator = float(result[kept].sum())
+            if mass == 0:
+                continue
+            if denominator > 0:
+                result[kept] *= 1 + mass / denominator
+            else:
+                leftover += mass
+    else:
+        leftover = float(baseline[mask].sum())
+    if leftover > 0:
+        denominator = float(result[recipient].sum())
+        result[recipient] *= 1 + leftover / denominator
+    if not np.isclose(result.sum(), baseline.sum(), rtol=1e-10, atol=1e-5):
+        raise ArithmeticError("Bias-neutral reallocation failed to conserve forecast volume")
+    return result
+
+
 def candidates(history: pd.DataFrame, baseline: np.ndarray) -> tuple[dict[str, np.ndarray], dict]:
     if baseline.shape != (len(history), HORIZON):
         raise ValueError("Incorrect incumbent shape")
@@ -105,6 +159,12 @@ def candidates(history: pd.DataFrame, baseline: np.ndarray) -> tuple[dict[str, n
         "inactive26_annual_zero": zero_where(baseline, masks["inactive26_annual_zero"]),
         "warehouse_closed26": zero_where(baseline, masks["warehouse_closed26"]),
         "amsi_short30_and_inactive26": zero_where(short30, masks["inactive26_annual_zero"]),
+        "inactive52_reallocate_global": rebalance_predictions(baseline, masks["inactive52"]),
+        "inactive26_reallocate_global": rebalance_predictions(baseline, masks["inactive26_annual_zero"]),
+        "inactive52_reallocate_client": rebalance_predictions(
+            baseline, masks["inactive52"], history["Client"].to_numpy()),
+        "warehouse_closed26_reallocate_client": rebalance_predictions(
+            baseline, masks["warehouse_closed26"], history["Client"].to_numpy()),
     }
     if tuple(out) != POLICIES:
         raise AssertionError("Candidate registry changed")
@@ -222,7 +282,7 @@ def score(data_dir: Path, output_dir: Path) -> dict:
         for name in receipt["candidate_names"]:
             pred = np.asarray(data[name],dtype=np.float64)
             measures[name] = _metric(pred,y)
-            if name in ("incumbent","amsi_short30","phase0_selected","inactive26_annual_zero"):
+            if name in ("incumbent","amsi_short30","phase0_selected","inactive26_annual_zero","inactive52_reallocate_client"):
                 weekly[name] = pred.sum(axis=0).tolist()
     result = {
         "phase": receipt["phase"],
