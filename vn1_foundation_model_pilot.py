@@ -127,7 +127,7 @@ def build_predictor(model: str, device: str = "cpu") -> Callable[[np.ndarray], n
         MODEL_IDS[model], force_download=False)
     model_instance.compile(timesfm.ForecastConfig(
         max_context=512, max_horizon=HORIZON,
-        normalize_inputs=True, per_core_batch_size=16,
+        normalize_inputs=True, per_core_batch_size=4 if device == "cuda" else 16,
         use_continuous_quantile_head=True, infer_is_positive=True,
     ))
     def predict(batch: np.ndarray) -> np.ndarray:
