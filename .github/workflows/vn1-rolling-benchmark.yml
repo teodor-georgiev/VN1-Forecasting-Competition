@@ -1,0 +1,73 @@
+name: VN1 rolling-origin experimental benchmark
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-rolling-benchmark.yml"
+      - "vn1_adaptive.py"
+      - "test_vn1_rolling.py"
+      - "requirements-vn1-specialists.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rolling-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - run: python -m pip install -r requirements-vn1-specialists.txt
+      - run: python -m pytest -q test_vn1_rolling.py test_vn1_adaptive.py
+
+  rolling-replay:
+    needs: rolling-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Download published Phase 2 sales with pinned Git blob integrity
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from urllib.request import urlopen
+          revision = "281dccfa449442774690e9ad639a7d9405e6620c"
+          url = f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
+          with urlopen(url, timeout=45) as response:
+              payload = response.read()
+          blob_sha = hashlib.sha1(f"blob {len(payload)}\\0".encode() + payload).hexdigest()
+          assert blob_sha == "714205238d3fcebe8a82b0cec97b28f375914d3b"
+          Path("Phase 2 - Sales.csv").write_bytes(payload)
+          PY
+      - name: Phase 1 rolling-origin replay
+        run: |
+          python -u vn1_adaptive.py --phase 1 --trees 160 --theta-cap 120 \
+            --selector rolling --output Phase1_Rolling.csv | tee Phase1_Rolling_metrics.json
+      - name: Phase 2 rolling-origin replay
+        run: |
+          python -u vn1_adaptive.py --phase 2 --trees 160 --theta-cap 120 \
+            --selector rolling --output Phase2_Rolling.csv | tee Phase2_Rolling_metrics.json
+      - name: Preserve rolling test receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-rolling-origin-replay
+          path: |
+            Phase1_Rolling_metrics.json
+            Phase2_Rolling_metrics.json
+            Phase1_Rolling.csv
+            Phase2_Rolling.csv
+          if-no-files-found: warn
+          retention-days: 14
