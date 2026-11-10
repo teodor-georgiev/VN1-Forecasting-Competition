@@ -126,6 +126,29 @@ def test_january_gate_keeps_champion_without_earlier_january_fold():
                            final_month=1)["selected_strength"] == 0.0
 
 
+def test_october_requires_a_completed_october_validation_fold():
+    # The only October example is fold 1, which has <2 earlier training
+    # folds; that is not enough evidence to switch at an October final origin.
+    n = 50
+    ids = pd.DataFrame({"Client": [0] * 25 + [1] * 25,
+                        "Warehouse": [0] * 25 + [1] * 25})
+    prediction = np.full((5, n, HORIZON), 10.0)
+    actual = prediction.copy()
+    actual[:, :25] = 13.0
+    actual[:, 25:] = 7.0
+    dates = ["2022-07-03", "2022-10-02", "2023-01-02",
+             "2023-04-02", "2023-07-02"]
+    unrestricted = select_strength(ids, prediction, actual)
+    assert unrestricted["selected_strength"] > 0.0
+    guarded = select_strength(ids, prediction, actual,
+                              origin_dates=dates, final_month=10)
+    assert guarded["selected_strength"] == 0.0
+    assert guarded["seasonal_gate_month"] == 10
+    with pytest.raises(ValueError, match="valid calendar"):
+        select_strength(ids, prediction, actual,
+                        origin_dates=dates, final_month=13)
+
+
 def test_pipeline_runs_without_seeing_phase_target():
     history = synthetic_history(weeks=170)
     assert historical_origins(history) == [105, 118, 131, 144, 157]
