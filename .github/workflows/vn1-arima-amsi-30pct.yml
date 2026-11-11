@@ -1,0 +1,65 @@
+name: VN1 30pct AutoARIMA + AMSI research
+
+on:
+  pull_request:
+    paths:
+      - "vn1_winner_arima_amsi_research.py"
+      - "test_vn1_winner_arima_amsi_research.py"
+      - ".github/workflows/vn1-arima-amsi-30pct.yml"
+      - "docs/VN1_ARIMA_AMSI_30PCT.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vn1-arima-amsi-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned VN1 requirements
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Run leakage, fallback and score integrity tests
+        run: python -m pytest -q test_vn1_winner_arima_amsi_research.py
+
+  full-retrospective:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install pinned statistical forecasting requirements
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Freeze Phase 0 selection and Phase 1/2 forecasts before scoring
+        run: |
+          python -u vn1_winner_arima_amsi_research.py freeze --data-dir . --output-dir results/arima-amsi-capped16 --cap 16
+      - name: Retrospective Phase 1 score (Phase 2 target not present in this public repo)
+        run: |
+          python -u vn1_winner_arima_amsi_research.py score --data-dir . --output-dir results/arima-amsi-capped16 --phase 1 --truth "Phase 1 - Sales.csv"
+      - name: Publish frozen research receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-arima-amsi-capped16-evidence
+          path: results/arima-amsi-capped16/
+          if-no-files-found: warn
+          retention-days: 14
