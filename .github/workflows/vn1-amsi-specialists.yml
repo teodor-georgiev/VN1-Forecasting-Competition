@@ -1,0 +1,64 @@
+name: VN1 AMSI and StatsForecast candidate tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-amsi-specialists.yml"
+      - "vn1_amsi_specialists.py"
+      - "test_vn1_amsi_specialists.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned validation dependencies
+        run: |
+          python -m pip install -r requirements-vn1.txt
+          python -m pip install statsforecast==2.1.1
+      - name: Test seasonal anchor and gated ensemble
+        run: python -m pytest -q test_vn1_amsi_specialists.py
+      - name: Verify module compiles
+        run: python -m py_compile vn1_amsi_specialists.py test_vn1_amsi_specialists.py
+
+  historical-amsi-phase1:
+    needs: unit-and-integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned baseline dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Full 15,053-series historical AMSI validation (Phase 0 only for selection)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -u vn1_amsi_specialists.py --phase 1 --stats-cap 0 \
+            --n-estimators 160 --output amsi_phase1.csv | tee amsi_phase1_receipt.json
+      - name: Preserve metrics receipt (not customer data)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-amsi-phase1-retrospective-metrics
+          path: amsi_phase1_receipt.json
+          if-no-files-found: warn
+          retention-days: 21
