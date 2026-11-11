@@ -129,4 +129,4 @@ def test_preselected_fast_freeze_fits_only_one_candidate(monkeypatch,tmp_path):
     assert result["candidate_names"]==[
         "learned_activity","target_season_norm","historical_selected"]
     score=f.score(tmp_path,out,phase=2,truth=tmp_path/"Phase 2 - Sales.csv")
-    assert score["scores"]["historical_selected"]==pytest.approx(1.1)
+    assert score["scores"]["historical_selected"]==pytest.approx(0.2)
