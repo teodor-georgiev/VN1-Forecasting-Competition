@@ -30,7 +30,7 @@ from vn1_learned_activity import (
 # The successful previous research policy is the comparator, not Phase 2 truth.
 POLICIES = ("activity_p100", "hurdle25", "hurdle50", "hurdle75", "hurdle100")
 PARAMS = dict(
-    objective="regression",
+    objective="gamma",
     learning_rate=0.05,
     num_leaves=15,
     n_estimators=100,
@@ -45,7 +45,7 @@ PARAMS = dict(
 
 
 def fit_conditional(history: pd.DataFrame, *, n_estimators: int = 100):
-    """Only positive completed 13-week totals become conditional training labels.
+    """Fit the positive-only 13-week conditional *mean* with Gamma regression.
 
     Return training metadata for auditing chronology and class imbalance.
     """
@@ -63,14 +63,14 @@ def fit_conditional(history: pd.DataFrame, *, n_estimators: int = 100):
         counts.append(int(mask.sum()))
         if mask.any():
             positive_x.append(activity_features(past).loc[mask])
-            positive_y.append(np.log1p(future_total[mask]))
+            positive_y.append(future_total[mask])
     if not positive_x:
         return None, 0.0, {"origins": origins, "positive_counts": counts}
     X = pd.concat(positive_x, ignore_index=True)
     target = np.concatenate(positive_y)
     if X.shape[0] != target.size or not np.isfinite(target).all():
         raise ValueError("Conditional training misaligned or nonfinite")
-    fallback = float(np.expm1(target.mean()))
+    fallback = float(target.mean())
     model = None
     if X.shape[0] >= 10 and np.ptp(target) >= 1e-10:
         model = lgb.LGBMRegressor(**dict(PARAMS, n_estimators=n_estimators))
@@ -85,10 +85,9 @@ def predict_positive_total(history: pd.DataFrame, *, n_estimators: int = 100
     if model is None:
         predicted = np.full(len(history), fallback, dtype=np.float64)
     else:
-        log_amount = model.predict(activity_features(history))
-        # Bound numerics at a generous count level; all clipping is independent
-        # of unobserved future targets.
-        predicted = np.expm1(np.clip(log_amount, 0, np.log1p(1e9)))
+        # Gamma objective estimates the conditional arithmetic mean of positive
+        # demand, unlike expm1(E[log1p(Y)]) which underestimates skewed demand.
+        predicted = np.clip(model.predict(activity_features(history)), 0, 1e9)
     if predicted.shape != (len(history),) or not np.isfinite(predicted).all():
         raise ValueError("Invalid conditional quantity forecast")
     return np.maximum(predicted, 0), details
