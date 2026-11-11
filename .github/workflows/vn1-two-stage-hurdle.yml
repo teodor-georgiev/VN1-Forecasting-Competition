@@ -1,0 +1,58 @@
+name: VN1 Two-Stage Hurdle Research
+
+on:
+  pull_request:
+    paths:
+      - "vn1_two_stage_hurdle.py"
+      - "test_vn1_two_stage_hurdle.py"
+      - ".github/workflows/vn1-two-stage-hurdle.yml"
+      - "docs/VN1_TWO_STAGE_HURDLE_RESULTS.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned research dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Check two-stage chronology, training and weekly conservation
+        run: python -m pytest -q test_vn1_two_stage_hurdle.py
+
+  phase0-retrospective:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned research dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Full 15,053-series Phase 0 rolling-origin research
+        run: |
+          python -u vn1_two_stage_hurdle.py historical --data-dir . --output-dir results/vn1-hurdle-phase0
+      - name: Publish retrospective evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-hurdle-phase0-metrics
+          path: results/vn1-hurdle-phase0/phase0-historical.json
+          if-no-files-found: warn
+          retention-days: 14
