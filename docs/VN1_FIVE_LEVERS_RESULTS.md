@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-11  
 **Research branch:** \`feat/vn1-five-levers-20261111\`  
-**Status:** all five families implemented; synthetic tests passed; full Phase 0 historical benchmark completed including price features. Phase 1/2 evaluation is not yet claimed in this receipt.
+**Status:** all five families implemented; Phase 0 historical selection passed; selected model scored retrospectively on Phase 2 using a SHA-256-pinned frozen archive. The Phase 2 result did **not** improve over learned activity.
 
 ## Goal and evaluation
 
@@ -45,13 +45,26 @@ This is the only model selected in the recorded Phase 0 recipe; the isolated hol
 - The public branch contains only \`vn1_five_levers.py\`, \`vn1_five_levers_frozen.py\`, regression tests and the scoped CI workflow, plus this aggregate result report.
 - Prices were consumed **read-only from the private VN1-Forecasting repository** in a desktop isolated research checkout; the results above are aggregate losses only.
 - Synthetic tests cover all five families, no future price/sales exposure, positive-value handling, weekly total conservation, source key alignment, selection split, and **freeze-first** Phase 1/2 scoring with SHA-256 integrity.
-- **12/12 local tests passed** in the isolated desktop research checkout on the latest branch contents, using a dedicated scratch path on D: because the desktop's C: filesystem was full.
+- **13/13 local tests passed** in the isolated desktop research checkout on the latest branch contents, using a dedicated scratch path on D: because the desktop's C: filesystem was full.
 - Public [GitHub Actions run #43066111096](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43066111096) successfully completed sales-only historical training/holdout. Its winning normalized-target result agrees with the separate **price-enabled desktop benchmark** to floating-point tolerance.
 - Public [GitHub Actions run #43067434042](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43067434042) passed after the independent freeze-first evaluator was added, including the extended regression test suite.
 - Private target/price files and per-series forecasts are **never** included in public CI artifacts.
 
-## Remaining validation
+## Retrospective Phase 2 score — verified on 2026-11-11
 
-The Phase 1 and Phase 2 score receipts must come from **forecasts frozen before evaluation truth is opened** using \`vn1_five_levers_frozen.py\`, and Phase 2 must be explicitly described as previously researched, **not a new blind leaderboard test**. A freeze was started on an authorized desktop session, but a final completed Phase 2 score had not yet been verified at the time of writing.
+The historically selected `target_season_norm` forecast was **frozen using Phase 0 and Phase 1 sales and private observed price history before the evaluation labels were opened**. The immutable archive passed the scorer's SHA-256 integrity check and row/date alignment checks. The Windows process exited with code 0.
 
-No production champion promotion, PR merge, or deployment has been authorized or performed for these experimental results.
+| Model | Phase 2 VN1 metric ↓ |
+|---|---:|
+| **Previously accepted learned activity** | **0.4729805956870398** |
+| Phase 0-selected seasonal normalization | 0.47373646975740963 |
+
+- **Result:** the seasonal normalization candidate is **worse by 0.0007558740703698 absolute**, approximately **0.160% relative**, on Phase 2; **do not promote it**.
+- Evaluated **15,053 series × 13 future weeks**, with metric matching the official VN1 `functions_for_participants.data_competition_evaluation` formula.
+- Frozen forecast SHA-256: `e4b168d3e7ad1395f208752b65ff90cba1487d2511b32750f4201ffb7c4efbbf`.
+- Frozen Phase 0 selection: `target_season_norm`; historical gate `accepted: true`. Historical selection was made without Phase 2 labels, and the same archive also contains the learned-activity control, allowing matched comparison.
+- Verified with `vn1_five_levers_frozen.py score --phase 2` on the authorized desktop, using the clean research checkout `b0bf08f500a70ae0dd01b6065c4c5d1e07f545dd`. Scorer receipt stored in the desktop scratch directory alongside the frozen archive, not uploaded to public GitHub.
+- **Important limitation:** Phase 2 is retrospective and has already been analyzed in previous experiments. This result is **not an untouched blind competition estimate**.
+- The added public Phase 1 freeze-and-score GitHub job is separately queued, and its outcome is not needed to validate this locally verified Phase 2 receipt.
+
+No default-branch modification, merge, deployment, or champion replacement. The best currently verified Phase 2 retrospective research result remains **0.4729805957** from learned activity.
