@@ -35,7 +35,10 @@ def test_training_targets_are_strictly_positive_and_fully_observed(monkeypatch):
     assert model is not None
     assert details["origins"]==[65,78,91]
     assert seen["rows"]==sum(details["positive_counts"])
-    assert np.all(seen["target"]>=np.log(2))
+    assert np.all(seen["target"]>=1)
+    # Gamma sees the actual positive unit totals rather than log-transformed
+    # targets; inverse-log predictions would not estimate arithmetic means.
+    assert np.allclose(seen["target"],np.floor(seen["target"]))
     assert prior>0
     assert "weeks_since_event" in seen["columns"]
 
