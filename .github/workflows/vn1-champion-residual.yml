@@ -1,0 +1,62 @@
+name: VN1 Champion OOF Residual Research
+
+on:
+  pull_request:
+    paths:
+      - "vn1_champion_residual_oof.py"
+      - "test_vn1_champion_residual_oof.py"
+      - "docs/VN1_CHAMPION_RESIDUAL_RESULTS.md"
+      - ".github/workflows/vn1-champion-residual.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vn1-champion-residual-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install pinned forecasting dependencies
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Test champion identity, chronology, group gate and frozen integrity
+        run: python -m pytest -q test_vn1_champion_residual_oof.py
+
+  historical-rolling:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install pinned forecasting dependencies
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Phase0 OOF residuals and champion comparison (no future truth)
+        run: |
+          python -u vn1_champion_residual_oof.py historical --data-dir . --out results/vn1-champion-residual --trees 160 --activity-trees 100 --client-cap 16 --residual-trees 100
+      - name: Upload aggregate score and training lineage, never individual forecasts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-champion-residual-phase0-aggregate
+          path: results/vn1-champion-residual/historical.json
+          if-no-files-found: warn
+          retention-days: 14
