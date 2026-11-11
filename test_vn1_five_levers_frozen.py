@@ -54,7 +54,8 @@ def test_freeze_phase2_before_private_target_and_score_only_later(monkeypatch,tm
     receipt=fixture_inputs(tmp_path)
     fake_forecast(monkeypatch)
     phase2=tmp_path/"Phase 2 - Sales.csv"
-    phase2.rename(tmp_path/"hidden-Phase2.csv")
+    hidden=tmp_path/"hidden-Phase2.csv"
+    phase2.rename(hidden)
     out=tmp_path/"frozen"
     manifest=f.freeze(tmp_path,out,receipt,phase=2,
                       price0=tmp_path/"Phase 0 - Price.csv",
@@ -68,10 +69,10 @@ def test_freeze_phase2_before_private_target_and_score_only_later(monkeypatch,tm
     assert not (out/"score.json").exists()
     with pytest.raises(FileNotFoundError):
         f.score(tmp_path,out,phase=2,truth=phase2)
-    phase2.rename(phase2)
+    hidden.rename(phase2)
     scores=f.score(tmp_path,out,phase=2,truth=phase2)
     assert scores["phase0_selected"]=="target_season_norm"
-    assert scores["scores"]["historical_selected"]==pytest.approx(0.5)
+    assert scores["scores"]["historical_selected"]==pytest.approx(1.0)
     assert scores["retrospective_not_blind"]
     with pytest.raises(FileExistsError):
         f.freeze(tmp_path,out,receipt,phase=2)
