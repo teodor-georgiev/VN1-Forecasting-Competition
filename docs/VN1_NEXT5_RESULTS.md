@@ -92,7 +92,35 @@ origin, and Phase 1/2 labels never enter model fitting or selection.
 research checkout at \`5fed30a4d624d617ead9c7fceec245b39ddfa942\`.
 The public [GitHub Actions research run #43104486102](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43104486102)
 passed its unit tests and started the full Phase 0 rolling benchmark.
-Detailed results are only recorded after verification.
+The full 15,053-series × 13-week Phase 0 rolling benchmark finished
+successfully on the fixed source revision
+`5fed30a4d624d617ead9c7fceec245b39ddfa942`.
+
+| Candidate | Pooled 5-fold train ↓ | Origin-157 holdout ↓ | Train folds better than control |
+|---|---:|---:|---:|
+| Learned-activity control | 0.5089389755 | 0.4859224233 | — |
+| Active residual, 20% blend | **0.5079199196** | 0.4810888180 | 2/5 |
+| Active residual, 35% blend | 0.5085286565 | **0.4795382006** | 1/5 |
+| Adaptive series AMSI | 0.5085603406 | 0.4837832323 | 4/5 |
+| Adaptive client-warehouse AMSI | 0.5084910661 | 0.4843792715 | 4/5 |
+
+**Selection:** training-only winner `residual_active20`.
+It improves pooled training by **0.001019056** and holdout by
+**0.004833605**, but improves only **2/5 training folds** (needs at least
+3/5). Consequently **`accepted=false` and `selected=learned_activity`**.
+The historical acceptance threshold is not changed after reading results.
+
+The rolling-fold pattern suggests the residual specialist was more
+effective at later origins 131/144/157 than earlier 92/105/118. Adaptive
+AMSI is more fold-consistent, but its pooled improvements are too small.
+Neither was tested for Phase 2 promotion; **ARIMA+AMSI remains the best
+verified Phase 2 research model at 0.4693382739**.
+
+Source: [successful historical CI run #43104486102](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43104486102).
+The full aggregate-only `historical.json` receipt contains scores for
+all 6 origins, training-fold improvement counts and bounded model
+diagnostics. The audit and historical evaluation were performed without
+copying any private sales, forecast rows or private IDs to GitHub.
 
 **Release:** research-only draft PR; no merge, deployment, production
 modification or automatic champion replacement.
