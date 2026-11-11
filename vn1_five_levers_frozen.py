@@ -18,8 +18,10 @@ from vn1_from_scratch import HORIZON, KEYS, read_sales
 from vn1_lgbm_ensemble import read_history
 from vn1_amsi_zero_rule_ablation import incumbent
 from vn1_five_levers import (
-    POLICIES, FAMILIES, MIN_GAIN, candidates, read_price, _metric,
+    POLICIES, FAMILIES, MIN_GAIN, MODEL_VARIANTS, candidates, read_price, _metric,
+    _train_predict_variants, _hierarchy, _trim_leading_zeros,
 )
+from vn1_learned_activity import allocate_weekly, predict_activity
 
 
 def _digest(path:Path) -> str:
@@ -72,7 +74,8 @@ def _prices(data_dir:Path, phase:int,
 
 def freeze(data_dir:Path,out_dir:Path,report:Path,*,phase:int,
            price0:Path|None=None,price1:Path|None=None,trees:int=80,
-           activity_trees:int=100,baseline_trees:int=160)->dict:
+           activity_trees:int=100,baseline_trees:int=160,
+           selected_only:bool=False)->dict:
     if phase not in (1,2):raise ValueError("Bad phase")
     if out_dir.exists() and any(out_dir.iterdir()):
         raise FileExistsError("Freeze directory must be new or empty")
@@ -80,8 +83,25 @@ def freeze(data_dir:Path,out_dir:Path,report:Path,*,phase:int,
     history=read_history(phase,data_dir)
     prices=_prices(data_dir,phase,price0,price1)
     control=incumbent(history,trees=baseline_trees)
-    forecast,meta=candidates(history,control,prices=prices,
-                             trees=trees,activity_trees=activity_trees)
+    if selected_only:
+        probabilities, probability_meta = predict_activity(history,estimators=activity_trees)
+        base=allocate_weekly(control,probabilities)
+        forecast={"learned_activity":base}
+        selected=chosen["selected"]
+        if selected in MODEL_VARIANTS:
+            forecast.update(_train_predict_variants(history,base,prices,
+                            trees=trees,only={selected}))
+        elif selected=="hierarchy_client_warehouse":
+            forecast[selected]=_hierarchy(history,base)
+        elif selected=="trim_prelaunch_zeros":
+            forecast[selected]=_trim_leading_zeros(history,base)
+        elif selected!="learned_activity":
+            raise ValueError("Unknown selected policy")
+        meta={"policies":list(forecast),"prices_available":prices is not None,
+              "activity":probability_meta}
+    else:
+        forecast,meta=candidates(history,control,prices=prices,
+                                 trees=trees,activity_trees=activity_trees)
     if chosen["selected"] not in forecast:
         raise AssertionError("Selected model missing from candidate set")
     forecast["historical_selected"]=forecast[chosen["selected"]].copy()
@@ -101,6 +121,7 @@ def freeze(data_dir:Path,out_dir:Path,report:Path,*,phase:int,
         "price0_sha256":_digest(price0) if price0 is not None else None,
         "price1_sha256":_digest(price1) if price1 is not None else None,
         "price_data_embedded_in_archive":False,
+        "only_historically_selected_policy_fit":selected_only,
         "phase_target_labels_not_loaded_in_freeze":True,
         "caveat":"Previously analyzed retrospective phases, not independent blind validation.",
         "fit_summary":{"policies":meta["policies"],"prices_available":meta["prices_available"]}
@@ -152,12 +173,15 @@ def main():
     p.add_argument("--trees",type=int,default=80)
     p.add_argument("--activity-trees",type=int,default=100)
     p.add_argument("--baseline-trees",type=int,default=160)
+    p.add_argument("--selected-only",action="store_true",
+                   help="Fit only the preselected Phase 0 candidate plus control")
     args=p.parse_args()
     if args.operation=="freeze":
         if args.report is None:p.error("freeze requires historical --report")
         freeze(args.data_dir,args.out,args.report,phase=args.phase,
                price0=args.price0,price1=args.price1,trees=args.trees,
-               activity_trees=args.activity_trees,baseline_trees=args.baseline_trees)
+               activity_trees=args.activity_trees,baseline_trees=args.baseline_trees,
+               selected_only=args.selected_only)
     else:
         if args.truth is None:p.error("score requires --truth")
         score(args.data_dir,args.out,phase=args.phase,truth=args.truth)
