@@ -160,7 +160,8 @@ def _invert_target(values:np.ndarray,features:pd.DataFrame,name:str)->np.ndarray
 
 
 def _train_predict_variants(history:pd.DataFrame,base:np.ndarray,
-                            prices:pd.DataFrame | None, *, trees:int=80
+                            prices:pd.DataFrame | None, *, trees:int=80,
+                            only: set[str] | None = None
                             ) -> dict[str,np.ndarray]:
     X,y,_=_fit_dataset(history,None)
     current=_X(history,_sales(history).shape[1],None)
@@ -169,7 +170,11 @@ def _train_predict_variants(history:pd.DataFrame,base:np.ndarray,
         px,py,_=_fit_dataset(history,prices)
         pcurrent=_X(history,_sales(history).shape[1],prices)
     output={}
+    if only is not None and not only.issubset(MODEL_VARIANTS):
+        raise ValueError("Unknown selected direct model")
     for key,(objective,transform,has_price,quantile) in MODEL_VARIANTS.items():
+        if only is not None and key not in only:
+            continue
         if has_price and prices is None:
             continue
         a=px if has_price else X
