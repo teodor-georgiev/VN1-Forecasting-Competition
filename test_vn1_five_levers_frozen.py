@@ -103,3 +103,30 @@ def test_changing_phase0_acceptance_or_prices_flag_is_rejected(tmp_path):
     receipt.write_text(json.dumps(selected))
     with pytest.raises(ValueError,match="mismatched"):
         f._selected(receipt,prices=False)
+
+
+def test_preselected_fast_freeze_fits_only_one_candidate(monkeypatch,tmp_path):
+    receipt=fixture_inputs(tmp_path)
+    monkeypatch.setattr(f,"incumbent",lambda hist,trees:
+                        np.full((len(hist),13),2.))
+    monkeypatch.setattr(f,"predict_activity",lambda hist,estimators:(
+        np.ones(len(hist)),{"training_origins":[65]}))
+    called=[]
+    def only_selected(hist,base,prices,trees,only):
+        called.append(only)
+        return {"target_season_norm":base*.90}
+    monkeypatch.setattr(f,"_train_predict_variants",only_selected)
+    monkeypatch.setattr(f,"candidates",
+                        lambda *args,**kwargs:
+                        (_ for _ in ()).throw(AssertionError("Fitted all variants")))
+    out=tmp_path/"selected-only"
+    result=f.freeze(tmp_path,out,receipt,phase=2,
+                    price0=tmp_path/"Phase 0 - Price.csv",
+                    price1=tmp_path/"Phase 1 - Price.csv",
+                    selected_only=True)
+    assert called==[{"target_season_norm"}]
+    assert result["only_historically_selected_policy_fit"]
+    assert result["candidate_names"]==[
+        "learned_activity","target_season_norm","historical_selected"]
+    score=f.score(tmp_path,out,phase=2,truth=tmp_path/"Phase 2 - Sales.csv")
+    assert score["scores"]["historical_selected"]==pytest.approx(1.1)
