@@ -5,12 +5,14 @@ on:
     paths:
       - "vn1_champion_residual_oof.py"
       - "test_vn1_champion_residual_oof.py"
+      - "vn1_champion_residual_parity.py"
       - "docs/VN1_CHAMPION_RESIDUAL_RESULTS.md"
       - ".github/workflows/vn1-champion-residual.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: vn1-champion-residual-${{ github.event.pull_request.number || github.ref }}
@@ -60,3 +62,29 @@ jobs:
           path: results/vn1-champion-residual/historical.json
           if-no-files-found: warn
           retention-days: 14
+
+  champion-parity:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install exact pinned forecasting environment
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Download published PR17 reference forecast (same repository)
+        uses: actions/download-artifact@v4
+        with:
+          repository: teodor-georgiev/VN1-Forecasting-Competition
+          run-id: 43060875239
+          name: vn1-arima-amsi-capped16-evidence
+          path: results/champion-reference
+          github-token: ${{ github.token }}
+      - name: Verify exact historical champion predictions without target labels
+        run: python -u vn1_champion_residual_parity.py --data-dir . --archive-dir results/champion-reference
