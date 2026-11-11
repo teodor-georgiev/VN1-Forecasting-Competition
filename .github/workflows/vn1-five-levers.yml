@@ -62,3 +62,40 @@ jobs:
           path: results/five-levers-public/historical.json
           if-no-files-found: warn
           retention-days: 14
+
+  phase1-frozen-selected-only:
+    needs: phase0-public-sales-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Download historical Phase 0 selection without reranking candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: vn1-five-levers-public-historical
+          path: results/five-levers-public
+      - name: Freeze only historical winner and learned-activity control before Phase 1 truth
+        run: |
+          python -u vn1_five_levers_frozen.py freeze --phase 1 --data-dir . --out results/five-levers-phase1 --report results/five-levers-public/historical.json --selected-only --trees 80 --activity-trees 100 --baseline-trees 160
+      - name: Retrospective Phase 1 score of frozen predictions
+        run: |
+          python -u vn1_five_levers_frozen.py score --phase 1 --data-dir . --out results/five-levers-phase1 --truth "Phase 1 - Sales.csv"
+      - name: Upload aggregate scores and integrity manifest only, never individual forecasts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-five-levers-phase1-score-only
+          path: |
+            results/five-levers-phase1/manifest.json
+            results/five-levers-phase1/score.json
+          if-no-files-found: warn
+          retention-days: 14
