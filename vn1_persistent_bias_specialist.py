@@ -397,7 +397,7 @@ def main() -> None:
         phase0, trees=args.trees,
         activity_trees=args.activity_trees, client_cap=args.client_cap)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\\n")
+    args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     print("VN1_PERSISTENT_BIAS_RESULT=" + json.dumps({
         "selected": receipt["selected"],
         "accepted": receipt["accepted"],
