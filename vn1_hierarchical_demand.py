@@ -20,6 +20,7 @@ from vn1_from_scratch import HORIZON, KEYS, read_sales
 
 POLICIES = (
     "champion",
+    "persistent_unscaled25",
     "global_bias20",
     "clientwarehouse25",
     "hier_clientwarehouse25",
@@ -31,6 +32,7 @@ MIN_TRAIN_GAIN = 0.001
 MIN_HOLDOUT_GAIN = 0.001
 MIN_PHASE1_GAIN = 0.0002
 MIN_TRAIN_WINS = 2
+REFERENCE_POLICY = "persistent_unscaled25"
 
 
 def components(forecast: np.ndarray, target: np.ndarray) -> dict[str, float]:
@@ -141,8 +143,11 @@ def candidates(history: pd.DataFrame, champion: np.ndarray,
                 raise ArithmeticError("Client total demand changed after allocation")
         return result
 
+    existing, _ = previous.candidate_forecasts(
+        history, control, records)
     policies = {
         "champion": control.copy(),
+        "persistent_unscaled25": existing["group_unscaled25"],
         "global_bias20": direct(np.full(n, 0.20*global_rate)),
         "clientwarehouse25": direct(0.25*(client+warehouse)*0.5),
         "hier_clientwarehouse25": hierarchy(sku_allocation=False),
@@ -248,11 +253,11 @@ def validate(phase0: pd.DataFrame, phase1: pd.DataFrame, *,
     phase1_metrics = {name: components(pred, y1) for name, pred in variants.items()}
 
     accepted = (
-        winner != "champion"
-        and train[winner]["score"] <= train["champion"]["score"]-MIN_TRAIN_GAIN
-        and holdout[winner]["score"] <= holdout["champion"]["score"]-MIN_HOLDOUT_GAIN
+        winner not in ("champion", REFERENCE_POLICY)
+        and train[winner]["score"] <= train[REFERENCE_POLICY]["score"]-MIN_TRAIN_GAIN
+        and holdout[winner]["score"] <= holdout[REFERENCE_POLICY]["score"]-MIN_HOLDOUT_GAIN
         and phase1_metrics[winner]["score"] <= (
-            phase1_metrics["champion"]["score"]-MIN_PHASE1_GAIN)
+            phase1_metrics[REFERENCE_POLICY]["score"]-MIN_PHASE1_GAIN)
         and fold_wins[winner] >= MIN_TRAIN_WINS
     )
     return {
@@ -263,7 +268,8 @@ def validate(phase0: pd.DataFrame, phase1: pd.DataFrame, *,
         "phase1_scores": phase1_metrics,
         "train_fold_wins": fold_wins,
         "winner_training_only": winner,
-        "selected": winner if accepted else "champion",
+        "selected": winner if accepted else REFERENCE_POLICY,
+        "reference_policy": REFERENCE_POLICY,
         "accepted": bool(accepted),
         "policy_names": list(POLICIES),
         "thresholds": {"train": MIN_TRAIN_GAIN, "holdout": MIN_HOLDOUT_GAIN,
