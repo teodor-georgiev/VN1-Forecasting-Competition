@@ -1,0 +1,53 @@
+name: VN1 CatBoost XGBoost comparison
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-tree-comparison.yml"
+      - "vn1_tree_model_comparison.py"
+      - "test_vn1_tree_model_comparison.py"
+      - "requirements-vn1-tree-comparison.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-tree-comparison.txt
+      - run: python -m pip install -r requirements-vn1-tree-comparison.txt
+      - run: python -m pytest -q test_vn1_tree_model_comparison.py
+
+  benchmark-five-origins:
+    needs: model-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-tree-comparison.txt
+      - run: python -m pip install -r requirements-vn1-tree-comparison.txt
+      - name: Matched 1024 series and all five historical origins
+        run: |
+          set -euo pipefail
+          python -u vn1_tree_model_comparison.py --max-series 1024 --trees 160 \
+            --output VN1_Tree_Model_Comparison.json | tee VN1_Tree_Model_summary.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vn1-historical-catboost-xgboost-lightgbm
+          path: |
+            VN1_Tree_Model_Comparison.json
+            VN1_Tree_Model_summary.log
+          if-no-files-found: warn
+          retention-days: 21
