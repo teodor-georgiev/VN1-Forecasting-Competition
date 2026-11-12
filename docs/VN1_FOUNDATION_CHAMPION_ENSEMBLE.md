@@ -94,3 +94,42 @@ This new procedure tests conservative joint weights but **Phase 1 has already
 been inspected in earlier research**. Treat any reported Phase 2 gain as
 retrospective/non-blind, and use independent future chronological origins
 before promoting a candidate as a robust improvement.
+
+## First full-catalogue optimization, verified on desktop (2026-11-12)
+
+The immutable original PR17 champion forecast archive was downloaded from
+run `43060875239` and its Phase 2 SHA-256
+`33cdb93ccc2415e9c6697e1074a0e4ecb2ad6066d473480b79a3582aa1122101`
+was verified. Both Phase 1 and Phase 2 original ARIMA + AMSI forecasts were
+exported as keyed, 15,053-series CSVs; no refitting was needed. The larger
+Chronos-2 (120M) full-catalogue forecasts were saved independently by the
+desktop GPU runner.
+
+On 15,053 series and a 13-week horizon, the Phase 1 weight grid selected
+**70% original ARIMA+AMSI champion + 30% pure Chronos-2**:
+
+| Model | Phase 1 score | Frozen Phase 2 score |
+| --- | ---: | ---: |
+| Original ARIMA+AMSI champion | 0.5704981371 | **0.4693382739** |
+| Selected 70/30 blend | **0.5039456418** | 0.4769498817 |
+
+The Phase 2 blended forecast has lower **normalized absolute error** than
+the original champion (`0.4476793845` versus `0.4677593010`), but it
+has **more negative aggregate signed bias** (`-0.0292704972` versus
+`-0.0015789729`). Including VN1's mandatory signed-bias penalty, the
+Phase 2 score is therefore **worse by 0.0076116078**.
+
+This is diagnostic evidence of a *regime-dependent* global bias risk.
+Do not promote the Phase 1-selected 70/30 blend. The best independently
+verified retrospective persistent-bias specialist remains `0.4691204554`.
+A globally bias-neutralized ensemble may warrant a newly predeclared,
+historical validation experiment, not post-hoc selection on Phase 2.
+
+Desktop files (not committed): `champions/original-arima-amsi-phase1.csv`,
+`champions/original-arima-amsi-phase2.csv`,
+`ensemble_research/weights-original-plus-chronos2.json`,
+`ensemble_research/frozen-original-plus-chronos2/{ensemble-phase2.csv,
+champion-phase2.csv,frozen-manifest.json,score-phase2.json}`.
+A local `saved_models.json` index and compressed ZIP backups
+`archives/chronos2-phase1.zip` and `archives/chronos2-phase2.zip`
+also verify and preserve both reusable pure forecasts.
