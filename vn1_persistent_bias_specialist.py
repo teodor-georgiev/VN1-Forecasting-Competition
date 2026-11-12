@@ -123,8 +123,24 @@ def candidate_forecasts(
     series = effects["series"]
 
     def adjusted(rate: np.ndarray, *, conserve: bool = True) -> np.ndarray:
-        candidate = np.maximum(0.0, control * (1.0 + rate[:, None]))
-        return base._normalize(candidate, control) if conserve else candidate
+        # Renormalize ONLY the active pool. Inactive products retain exactly
+        # their original forecasts, even after volume conservation.
+        modifiable = effects["active"]
+        candidate = control.copy()
+        candidate[modifiable] = np.maximum(
+            0.0, control[modifiable] * (1.0 + rate[modifiable, None]))
+        if conserve and modifiable.any():
+            desired = control[modifiable].sum(axis=0)
+            current = candidate[modifiable].sum(axis=0)
+            if np.any((desired > 0) & (current <= 0)):
+                return control.copy()
+            scale = np.divide(
+                desired, current, out=np.ones_like(current), where=current > 0)
+            candidate[modifiable] *= scale[None, :]
+            if not np.allclose(candidate.sum(axis=0), control.sum(axis=0),
+                               atol=1e-7, rtol=1e-10):
+                raise ArithmeticError("Champion aggregate demand changed")
+        return candidate
 
     choices = {
         "champion": control.copy(),
