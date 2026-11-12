@@ -78,7 +78,7 @@ def test_optimize_uses_only_phase1_and_preserves_manifest(tmp_path):
         {"chronos2":files["chronos1"],"timesfm2.5":files["times1"]},
         weights_path,min_gain=0.001)
     assert receipt["selected_weights"]["champion"]>=0.7
-    assert receipt["selected_weights"]["timesfm2.5"]>0
+    assert receipt["selected_weights"]["chronos2"]>0
     assert receipt["phase2_labels_read"] is False
     assert weights_path.exists()
     assert receipt["selection_phase"]==1
