@@ -59,6 +59,7 @@ def test_candidate_forecasts_preserve_identity_mass_and_nonnegative_output():
             np.testing.assert_allclose(
                 forecast.sum(axis=0), champion.sum(axis=0), atol=1e-8)
         np.testing.assert_array_equal(forecast[-1], champion[-1])
+        np.testing.assert_array_equal(forecast[3], champion[3])  # inactive fallback
     assert not np.array_equal(choices["sku_stable35"], champion)
 
 
