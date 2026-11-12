@@ -1,0 +1,99 @@
+name: VN1 original frozen champion control audit
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-original-champion-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  compare-original-champion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install pinned score dependencies only
+        run: python -m pip install numpy==1.26.4 pandas==2.2.3
+      - name: Download original PR17 frozen champion (no re-fitting)
+        uses: actions/download-artifact@v4
+        with:
+          repository: teodor-georgiev/VN1-Forecasting-Competition
+          run-id: 43060875239
+          name: vn1-arima-amsi-capped16-evidence
+          path: results/original-champion
+          github-token: ${{ github.token }}
+      - name: Authenticate original frozen archive before reading targets
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          p=Path("results/original-champion")
+          archive=p/"frozen-phase2.npz"
+          digest=hashlib.sha256(archive.read_bytes()).hexdigest()
+          assert digest == "33cdb93ccc2415e9c6697e1074a0e4ecb2ad6066d473480b79a3582aa1122101"
+          manifest=json.loads((p/"manifest.json").read_text())
+          assert manifest["history_only_selection"]["selected"]=="arima30_client_amsi_last10"
+          assert manifest["phase_outputs"]["2"]["frozen_sha256"] == digest
+          print("VN1_ORIGINAL_CHAMPION_ARCHIVE_PARITY=PASS")
+          PY
+      - name: Retrieve pinned released Phase 2 labels only after archive verification
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from urllib.request import urlopen
+          revision="281dccfa449442774690e9ad639a7d9405e6620c"
+          u=f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
+          with urlopen(u,timeout=60) as response:
+              raw=response.read()
+          blob=hashlib.sha1(b"blob "+str(len(raw)).encode()+bytes([0])+raw).hexdigest()
+          assert blob=="714205238d3fcebe8a82b0cec97b28f375914d3b"
+          Path("Phase 2 - Sales.csv").write_bytes(raw)
+          print("VN1_RELEASED_PHASE2_BLOB_VERIFIED=PASS")
+          PY
+      - name: Score original immutable PR17 Phase 2 control directly
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import numpy as np
+          import pandas as pd
+          p=Path("results/original-champion")
+          meta=json.loads((p/"manifest.json").read_text())["phase_outputs"]["2"]
+          objective=pd.read_csv("Phase 2 - Sales.csv")
+          history=pd.read_csv("Phase 0 - Sales.csv",usecols=["Client","Warehouse","Product"])
+          keys=["Client","Warehouse","Product"]
+          assert objective[keys].equals(history[keys])
+          assert list(objective.columns[3:])==meta["dates"]
+          with np.load(p/"frozen-phase2.npz") as archived:
+              forecast=np.asarray(archived["historical_selected"],dtype=float)
+          actual=objective.iloc[:,3:].to_numpy(dtype=float)
+          assert forecast.shape==actual.shape==(15053,13)
+          error=forecast-actual
+          score=float((np.abs(error).sum()+abs(error.sum()))/actual.sum())
+          result={"original_frozen_phase2_score":score,
+                  "claimed_reference_score":0.4693382738889349,
+                  "difference_from_claim":score-0.4693382738889349,
+                  "series":len(actual),
+                  "horizon":13}
+          output=Path("original-champion-phase2-score.json")
+          output.write_text(json.dumps(result,indent=2)+chr(10))
+          print("VN1_ORIGINAL_FROZEN_CHAMPION_SCORE="+json.dumps(result,sort_keys=True))
+          PY
+      - name: Archive only aggregate score
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-original-champion-score-aggregate
+          path: original-champion-phase2-score.json
+          retention-days: 14
+          if-no-files-found: warn
