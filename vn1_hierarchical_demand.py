@@ -37,7 +37,7 @@ def components(forecast: np.ndarray, target: np.ndarray) -> dict[str, float]:
     """Exact official VN1 score split into absolute and global signed error."""
     p = np.asarray(forecast, dtype=np.float64)
     y = np.asarray(target, dtype=np.float64)
-    if p.shape != y.shape or p.ndim != 2 or p.shape[1] != HORIZON:
+    if p.shape != y.shape or p.ndim != 2 or p.shape[1] < 1:
         raise ValueError("Forecast/target shape mismatch")
     if (not np.isfinite(p).all() or not np.isfinite(y).all()
             or (p < 0).any() or (y < 0).any()):
