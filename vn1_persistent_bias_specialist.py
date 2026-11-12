@@ -231,22 +231,173 @@ def historical_validation(
     }
 
 
+
+def _sha256(path: Path) -> str:
+    import hashlib
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verified_selection(report_path: Path) -> dict:
+    receipt = json.loads(report_path.read_text())
+    if (receipt.get("training_origins") != list(base.TRAIN_EVAL_ORIGINS)
+            or receipt.get("holdout_origin") != base.HOLDOUT_ORIGIN
+            or receipt.get("candidate_policies") != list(POLICIES)):
+        raise ValueError("Unexpected historical selection lineage")
+    winner = receipt.get("winner_training_only")
+    if winner not in POLICIES:
+        raise ValueError("Unrecognized historical winner")
+    train, holdout, wins = (
+        receipt["training_scores"], receipt["holdout_scores"],
+        receipt["train_fold_wins"])
+    expected = (
+        winner != "champion"
+        and train[winner] <= train["champion"] - MIN_GAIN
+        and holdout[winner] <= holdout["champion"] - MIN_GAIN
+        and wins[winner] >= MIN_TRAIN_FOLD_WINS
+    )
+    if receipt.get("accepted") is not bool(expected):
+        raise ValueError("Historical acceptance gate does not match metrics")
+    if receipt.get("selected") != (winner if expected else "champion"):
+        raise ValueError("Historical selection inconsistent with gate")
+    return receipt
+
+
+def freeze(
+    data_dir: Path,
+    output_dir: Path,
+    receipt_path: Path,
+    *,
+    trees: int = 160,
+    activity_trees: int = 100,
+    client_cap: int = 16,
+) -> dict:
+    """Freeze one historically selected Phase 2 challenger BEFORE reading targets."""
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise FileExistsError("Never overwrite a frozen forecast")
+    selection = _verified_selection(receipt_path)
+    from vn1_lgbm_ensemble import read_history
+
+    # read_history(2) reads ONLY Phase 0 and Phase 1 sales.
+    history = read_history(2, data_dir)
+    cutoff = base._history_matrix(history).shape[1]
+    records = base._completed_records(
+        history, cutoff, {}, trees=trees,
+        activity_trees=activity_trees, client_cap=client_cap)
+    champion, details = base.champion_forecast(
+        history, trees=trees,
+        activity_trees=activity_trees, client_cap=client_cap)
+    policies, diagnostic = candidate_forecasts(history, champion, records)
+    picked = policies[selection["selected"]]
+    output_dir.mkdir(parents=True, exist_ok=True)
+    archive = output_dir / "forecast.npz"
+    np.savez_compressed(archive, champion=champion, historical_selected=picked)
+    dates = list(pd.date_range(
+        pd.Timestamp(history.columns[-1]) + pd.Timedelta(weeks=1),
+        periods=HORIZON, freq="7D").strftime("%Y-%m-%d"))
+    manifest = {
+        "phase": 2,
+        "selected": selection["selected"],
+        "accepted": selection["accepted"],
+        "series": len(history),
+        "horizon": HORIZON,
+        "dates": dates,
+        "forecast_sha256": _sha256(archive),
+        "selection_sha256": _sha256(receipt_path),
+        "phase0_sales_sha256": _sha256(data_dir / "Phase 0 - Sales.csv"),
+        "phase1_sales_sha256": _sha256(data_dir / "Phase 1 - Sales.csv"),
+        "source_sha256": _sha256(Path(__file__)),
+        "completed_oof_origins": diagnostic["oof_origins"],
+        "champion": base.CHAMPION_NAME,
+        "no_target_labels_loaded_during_freeze": True,
+        "retrospective_not_blind": True,
+    }
+    (output_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    print("VN1_PERSISTENT_BIAS_FROZEN=" + json.dumps({
+        "selected": manifest["selected"],
+        "forecast_sha256": manifest["forecast_sha256"],
+        "completed_oof_origins": manifest["completed_oof_origins"],
+    }, sort_keys=True), flush=True)
+    return manifest
+
+
+def score(data_dir: Path, output_dir: Path, truth_path: Path) -> dict:
+    """Verify frozen forecasts before opening Phase 2 labels for final scoring."""
+    manifest = json.loads((output_dir / "manifest.json").read_text())
+    archive = output_dir / "forecast.npz"
+    if _sha256(archive) != manifest["forecast_sha256"]:
+        raise ValueError("Frozen forecast SHA-256 mismatch")
+    if (_sha256(data_dir / "Phase 0 - Sales.csv") != manifest["phase0_sales_sha256"]
+            or _sha256(data_dir / "Phase 1 - Sales.csv") != manifest["phase1_sales_sha256"]):
+        raise ValueError("Historical input SHA-256 mismatch")
+    from vn1_lgbm_ensemble import read_history
+
+    historical = read_history(2, data_dir)
+    actual = read_sales(truth_path)  # first and only access to Phase 2 labels
+    if (manifest["phase"] != 2
+            or len(actual) != manifest["series"]
+            or not historical[KEYS].equals(actual[KEYS])
+            or list(actual.columns[3:]) != manifest["dates"]):
+        raise ValueError("Phase 2 target alignment, IDs or dates differ")
+    target = actual.iloc[:, 3:].to_numpy(dtype=np.float64)
+    with np.load(archive) as frozen:
+        scores = {
+            name: float(_metric(np.asarray(frozen[name], dtype=np.float64), target))
+            for name in ("champion", "historical_selected")
+        }
+    receipt = {
+        "phase": 2,
+        "series": manifest["series"],
+        "horizon": HORIZON,
+        "selection": manifest["selected"],
+        "scores": scores,
+        "improvement": scores["champion"] - scores["historical_selected"],
+        "forecast_sha256": manifest["forecast_sha256"],
+        "retrospective_not_blind": True,
+    }
+    (output_dir / "score-phase2.json").write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    print("VN1_PERSISTENT_BIAS_PHASE2_SCORES=" +
+          json.dumps(receipt, sort_keys=True), flush=True)
+    return receipt
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--operation", choices=("historical", "freeze", "score"),
+                        default="historical")
     parser.add_argument("--data-dir", type=Path, default=Path("."))
     parser.add_argument("--output", type=Path, default=Path("results/persistent-bias.json"))
+    parser.add_argument("--selection", type=Path)
+    parser.add_argument("--truth", type=Path)
     parser.add_argument("--trees", type=int, default=160)
     parser.add_argument("--activity-trees", type=int, default=100)
     parser.add_argument("--client-cap", type=int, default=16)
     args = parser.parse_args()
     if args.trees < 1 or args.activity_trees < 1 or not 0 <= args.client_cap <= 512:
         parser.error("Invalid model capacity")
+    if args.operation == "freeze":
+        if args.selection is None:
+            parser.error("--selection is required when freezing")
+        freeze(args.data_dir, args.output, args.selection,
+               trees=args.trees, activity_trees=args.activity_trees,
+               client_cap=args.client_cap)
+        return
+    if args.operation == "score":
+        if args.truth is None:
+            parser.error("--truth is required when scoring")
+        score(args.data_dir, args.output, args.truth)
+        return
     phase0 = read_sales(args.data_dir / "Phase 0 - Sales.csv")
     receipt = historical_validation(
         phase0, trees=args.trees,
         activity_trees=args.activity_trees, client_cap=args.client_cap)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\\n")
     print("VN1_PERSISTENT_BIAS_RESULT=" + json.dumps({
         "selected": receipt["selected"],
         "accepted": receipt["accepted"],
