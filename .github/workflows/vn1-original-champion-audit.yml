@@ -86,7 +86,7 @@ jobs:
                   "series":len(actual),
                   "horizon":13}
           output=Path("original-champion-phase2-score.json")
-          output.write_text(json.dumps(result,indent=2)+"\\n")
+          output.write_text(json.dumps(result,indent=2)+chr(10))
           print("VN1_ORIGINAL_FROZEN_CHAMPION_SCORE="+json.dumps(result,sort_keys=True))
           PY
       - name: Archive only aggregate score
