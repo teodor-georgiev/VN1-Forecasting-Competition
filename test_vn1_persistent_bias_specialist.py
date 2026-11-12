@@ -171,3 +171,62 @@ def test_frozen_phase2_is_label_blind_aligned_and_integrity_checked(tmp_path, mo
         v.score(tmp_path, frozen, target_path)
     with pytest.raises(FileExistsError):
         v.freeze(tmp_path, frozen, selected)
+
+
+def test_pin_original_reference_during_freeze_without_phase2_truth(tmp_path, monkeypatch):
+    import hashlib
+    import json
+
+    prior = history()
+    prior.to_csv(tmp_path / "Phase 0 - Sales.csv", index=False)
+    dates1 = pd.date_range(pd.Timestamp(prior.columns[-1]) + pd.Timedelta(weeks=1),
+                           periods=13, freq="7D").strftime("%Y-%m-%d")
+    following = pd.concat([
+        prior.iloc[:, :3],
+        pd.DataFrame(np.ones((len(prior), 13)), columns=dates1)], axis=1)
+    following.to_csv(tmp_path / "Phase 1 - Sales.csv", index=False)
+    dates2 = pd.date_range(pd.Timestamp(dates1[-1]) + pd.Timedelta(weeks=1),
+                           periods=13, freq="7D").strftime("%Y-%m-%d")
+    selection = {
+        "training_origins": list(v.base.TRAIN_EVAL_ORIGINS),
+        "holdout_origin": v.base.HOLDOUT_ORIGIN,
+        "candidate_policies": list(v.POLICIES),
+        "training_scores": {"champion": .52, "group_unscaled25": .50},
+        "holdout_scores": {"champion": .49, "group_unscaled25": .48},
+        "train_fold_wins": {"group_unscaled25": 3},
+        "winner_training_only": "group_unscaled25",
+        "selected": "group_unscaled25", "accepted": True,
+    }
+    path = tmp_path / "selection.json"
+    path.write_text(json.dumps(selection))
+    n = len(prior)
+    monkeypatch.setattr(v.base, "_completed_records", lambda *a, **k: records(n))
+    monkeypatch.setattr(v.base, "champion_forecast", lambda *a, **k: (
+        np.full((n, 13), 10.0), {}))
+
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    immutable = reference / "frozen-phase2.npz"
+    exact = np.full((n, 13), 7.0)
+    np.savez_compressed(immutable, historical_selected=exact)
+    digest = hashlib.sha256(immutable.read_bytes()).hexdigest()
+    monkeypatch.setattr(v, "PINNED_REFERENCE_SHA256", digest)
+    (reference / "manifest.json").write_text(json.dumps({
+        "history_only_selection": {"selected": v.base.CHAMPION_NAME},
+        "phase_outputs": {"2": {
+            "series": n, "dates": list(dates2), "frozen_sha256": digest
+        }},
+    }))
+    frozen = tmp_path / "frozen"
+    manifest = v.freeze(tmp_path, frozen, path, reference_dir=reference)
+    assert manifest["original_pr17_reference_sha256"] == digest
+    assert manifest["no_target_labels_loaded_during_freeze"]
+    with np.load(frozen / "forecast.npz") as bundle:
+        np.testing.assert_array_equal(bundle["champion"], exact)
+    assert not (tmp_path / "Phase 2 - Sales.csv").exists()
+
+    with immutable.open("ab") as handle:
+        handle.write(b"tamper")
+    with pytest.raises(ValueError, match="reference SHA-256"):
+        v.freeze(tmp_path, tmp_path / "another-freeze", path,
+                 reference_dir=reference)
