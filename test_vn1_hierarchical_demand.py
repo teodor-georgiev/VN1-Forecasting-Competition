@@ -115,18 +115,21 @@ def test_phase1_is_separate_untuned_acceptance_gate(monkeypatch):
     def choices(past, champ, recs):
         at = past.shape[1] - 3
         forecasts = {"champion": champ.copy()}
-        for name in v.POLICIES[1:]:
+        forecasts["persistent_unscaled25"] = champ * (
+            1.0 if at == len(data.columns)-3 else 1.1)
+        for name in v.POLICIES[2:]:
             forecasts[name] = champ * (3.0 if at == len(data.columns)-3 else 1.2)
         return forecasts, {}
     monkeypatch.setattr(v, "candidates", choices)
     report = v.validate(data, following)
     assert origins == [118, 131, 144, 157, 183]
-    assert report["winner_training_only"] != "champion"
-    assert report["holdout_scores"][report["winner_training_only"]]["score"] < report["holdout_scores"]["champion"]["score"]
-    assert report["phase1_scores"][report["winner_training_only"]]["score"] > report["phase1_scores"]["champion"]["score"]
+    assert report["winner_training_only"] not in ("champion", "persistent_unscaled25")
+    assert report["holdout_scores"][report["winner_training_only"]]["score"] < report["holdout_scores"]["persistent_unscaled25"]["score"]
+    assert report["phase1_scores"][report["winner_training_only"]]["score"] > report["phase1_scores"]["persistent_unscaled25"]["score"]
     assert report["accepted"] is False
-    assert report["selected"] == "champion"
+    assert report["selected"] == "persistent_unscaled25"
     assert report["phase2_targets_read"] is False
+    assert report["reference_policy"] == "persistent_unscaled25"
 
 
 def test_invalid_phase1_row_or_date_alignment_fails_before_scoring(monkeypatch):
