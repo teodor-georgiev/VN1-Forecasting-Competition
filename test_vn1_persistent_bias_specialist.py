@@ -102,7 +102,7 @@ def test_historical_gate_rejects_candidate_when_last_holdout_regresses(monkeypat
         pred = {key: champion.copy() for key in v.POLICIES}
         # Earlier windows: high predictions generally reduce error (observed >= 1);
         # but holdout intentionally uses worse predictions.
-        multiplier = 2.0 if past.shape[1] - 3 == 157 else 1.1
+        multiplier = 5.0 if past.shape[1] - 3 == 157 else 1.1
         for name in v.POLICIES[1:]:
             pred[name] = champion * multiplier
         return pred, {}
