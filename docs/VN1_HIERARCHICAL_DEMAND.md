@@ -60,3 +60,45 @@ Run on the **full 15,053-series catalogue**; no 25-item or synthetic-data
 benchmark substitutes for the historical full-catalogue score.
 
 This is research-only: no production code, deployment or merge.
+
+## Full-catalogue validation result (2026-11-12)
+
+**Completed CI:** https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43167677043
+
+Both jobs completed successfully: causal/eligibility unit tests and full
+historical + Phase 1 replay. **No hierarchical challenger accepted**.
+
+| Policy | Phase 0 pooled train | Phase 0 later holdout | Independent Phase 1 |
+|---|---:|---:|---:|
+| Original ARIMA+AMSI champion | 0.5345784755 | 0.4811455955 | 0.5704760120 |
+| Existing persistent-bias incumbent | **0.5280916828** | **0.4739655397** | 0.5710679477 |
+| Global bias 20% | 0.5298894267 | 0.4768075096 | **0.5694310541** |
+| Client/warehouse direct 25% | 0.5280916828 | 0.4739655397 | 0.5710679477 |
+| Hierarchical client/warehouse | 0.5281006326 | 0.4739564101 | 0.5708531418 |
+| Hierarchical + stable high-volume SKU | **0.5280346177** | 0.4740082516 | 0.5709280826 |
+
+The *training-only* winner was `hier_sku25`, but its improvement
+relative to the existing incumbent was only 0.0000571 in pooled training.
+It **worsened** the later Phase 0 holdout by 0.0000427, and its Phase 1
+improvement was below the predefined 0.0002 minimum. The frozen
+decision is therefore `selected=persistent_unscaled25`, `accepted=false`.
+
+The global correction had a better Phase 1 score, but cannot be selected
+retrospectively based on that holdout because it had already lost the
+historical Phase 0 selection. Tuning or selecting it after reading Phase 1
+would violate this experiment's protocol.
+
+**No new Phase 2 score was produced.** The best verified retrospective
+Phase 2 score remains **0.4691204554267017** from PR #21.
+
+### Diagnostic interpretation
+
+The hierarchy offers small differences from the simpler group-bias
+specialist. In the original champion versus incumbent historical training
+comparison, the incumbent's normalized absolute error increased
+from 0.50377214 to 0.50617189, while the absolute signed-bias penalty
+decreased from 0.03080633 to 0.02191979. This shows why optimizing only
+individual product L1 error can miss the true official-score driver.
+Phase 1 has a different bias pattern and underscores non-stationarity.
+Further group-bias work needs more independent chronological folds or
+new causal features; this exposed holdout cannot be reused to tune policies.
