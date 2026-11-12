@@ -1,0 +1,4 @@
+# Optional transformer experiment (no change to baseline VN1 dependencies).
+-r requirements-vn1.txt
+# PyPI release 2026-09-08; pulls torch / transformers as dependencies.
+chronos-forecasting==2.3.2

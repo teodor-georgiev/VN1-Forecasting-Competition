@@ -1,0 +1,78 @@
+name: VN1 Chronos-Bolt pilot
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-chronos-bolt.yml"
+      - "vn1_chronos_bolt.py"
+      - "test_vn1_chronos_bolt.py"
+      - "requirements-vn1-transformer.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  adapter-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - run: python -m pip install -r requirements-vn1.txt
+      - run: python -m pytest -q test_vn1_chronos_bolt.py
+
+  zero-shot-pilot:
+    needs: adapter-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-transformer.txt
+      - name: Install pinned optional transformer dependency
+        run: python -m pip install -r requirements-vn1-transformer.txt
+      - name: Verify published Phase 2 labels
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+          from urllib.request import urlopen
+          revision = "281dccfa449442774690e9ad639a7d9405e6620c"
+          url = f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
+          with urlopen(url, timeout=45) as response:
+              payload = response.read()
+          blob = hashlib.sha1(b"blob " + str(len(payload)).encode() + bytes([0]) + payload).hexdigest()
+          assert blob == "714205238d3fcebe8a82b0cec97b28f375914d3b"
+          Path("Phase 2 - Sales.csv").write_bytes(payload)
+          PY
+      - name: Phase 1 zero-shot pilot (192 stratified series)
+        run: |
+          set -euo pipefail
+          python -u vn1_chronos_bolt.py --phase 1 --model-id amazon/chronos-bolt-tiny \
+            --max-series 192 --batch-size 32 --blend 0.5 \
+            --output Phase1_Chronos.csv | tee Phase1_Chronos_metrics.json
+      - name: Phase 2 zero-shot pilot (192 stratified series)
+        run: |
+          set -euo pipefail
+          python -u vn1_chronos_bolt.py --phase 2 --model-id amazon/chronos-bolt-tiny \
+            --max-series 192 --batch-size 32 --blend 0.5 \
+            --output Phase2_Chronos.csv | tee Phase2_Chronos_metrics.json
+      - name: Upload pilot receipts and forecasts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-chronos-bolt-stratified-pilot
+          path: |
+            Phase1_Chronos_metrics.json
+            Phase2_Chronos_metrics.json
+            Phase1_Chronos.csv
+            Phase2_Chronos.csv
+          retention-days: 14
+          if-no-files-found: warn
