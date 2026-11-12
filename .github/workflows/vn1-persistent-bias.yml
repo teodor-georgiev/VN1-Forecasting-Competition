@@ -1,0 +1,65 @@
+name: VN1 Persistent Champion Bias Specialist
+
+on:
+  pull_request:
+    paths:
+      - "vn1_persistent_bias_specialist.py"
+      - "test_vn1_persistent_bias_specialist.py"
+      - "docs/VN1_PERSISTENT_BIAS_SPECIALIST.md"
+      - ".github/workflows/vn1-persistent-bias.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vn1-persistent-bias-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install pinned forecasting dependencies
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Verify chronology, selection, and champion fallback
+        run: |
+          python -m pytest -q test_vn1_persistent_bias_specialist.py test_vn1_champion_residual_oof.py
+
+  historical-rolling:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install pinned forecasting dependencies
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Full-catalog Phase 0 chronological specialist comparison
+        run: |
+          python -u vn1_persistent_bias_specialist.py --data-dir . \
+            --output results/vn1-persistent-bias/historical.json \
+            --trees 160 --activity-trees 100 --client-cap 16
+      - name: Archive aggregate scores, never per-series forecasts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-persistent-bias-phase0-aggregate
+          path: results/vn1-persistent-bias/historical.json
+          if-no-files-found: warn
+          retention-days: 14
