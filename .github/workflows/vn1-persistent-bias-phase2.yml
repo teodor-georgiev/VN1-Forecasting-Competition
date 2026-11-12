@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: vn1-persistent-phase2-${{ github.event.pull_request.number || github.ref }}
@@ -38,11 +39,20 @@ jobs:
             --operation historical --data-dir . \
             --output "${{ runner.temp }}/persistent-selection.json" \
             --trees 160 --activity-trees 100 --client-cap 16
+      - name: Download immutable PR17 champion control (without labels)
+        uses: actions/download-artifact@v4
+        with:
+          repository: teodor-georgiev/VN1-Forecasting-Competition
+          run-id: 43060875239
+          name: vn1-arima-amsi-capped16-evidence
+          path: results/original-champion
+          github-token: ${{ github.token }}
       - name: Freeze predictions using Phase 0 and Phase 1 ONLY
         run: |
           python -u vn1_persistent_bias_specialist.py \
             --operation freeze --data-dir . \
             --selection "${{ runner.temp }}/persistent-selection.json" \
+            --reference-dir results/original-champion \
             --output "${{ runner.temp }}/persistent-frozen" \
             --trees 160 --activity-trees 100 --client-cap 16
       - name: Retrieve released Phase 2 labels AFTER freezing only
