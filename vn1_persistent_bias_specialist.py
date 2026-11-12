@@ -28,6 +28,7 @@ POLICIES = (
 )
 MIN_GAIN = 0.001
 MIN_TRAIN_FOLD_WINS = 2
+PINNED_REFERENCE_SHA256 = "33cdb93ccc2415e9c6697e1074a0e4ecb2ad6066d473480b79a3582aa1122101"
 
 
 def estimate_effects(history: pd.DataFrame, records: list[dict]) -> dict[str, np.ndarray]:
@@ -241,6 +242,30 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+
+def _read_pinned_reference(archive_dir: Path, *, series: int,
+                           dates: list[str]) -> np.ndarray:
+    """Use original PR17 immutable Phase 2 champion forecast without truth."""
+    archive = archive_dir / "frozen-phase2.npz"
+    digest = _sha256(archive)
+    manifest = json.loads((archive_dir / "manifest.json").read_text())
+    phase2 = manifest["phase_outputs"]["2"]
+    if digest != PINNED_REFERENCE_SHA256 or phase2["frozen_sha256"] != digest:
+        raise ValueError("Original champion reference SHA-256 mismatch")
+    if manifest["history_only_selection"]["selected"] != base.CHAMPION_NAME:
+        raise ValueError("Original champion reference selected the wrong model")
+    if phase2["series"] != series or phase2["dates"] != dates:
+        raise ValueError("Original champion reference forecast grid mismatch")
+    with np.load(archive) as frozen:
+        prediction = np.asarray(frozen["historical_selected"], dtype=np.float64)
+    if prediction.shape != (series, HORIZON) or not np.isfinite(prediction).all():
+        raise ValueError("Original champion reference shape or values invalid")
+    if (prediction < 0).any():
+        raise ValueError("Original champion reference contains negative forecasts")
+    return prediction
+
+
+
 def _verified_selection(report_path: Path) -> dict:
     receipt = json.loads(report_path.read_text())
     if (receipt.get("training_origins") != list(base.TRAIN_EVAL_ORIGINS)
@@ -274,6 +299,7 @@ def freeze(
     trees: int = 160,
     activity_trees: int = 100,
     client_cap: int = 16,
+    reference_dir: Path | None = None,
 ) -> dict:
     """Freeze one historically selected Phase 2 challenger BEFORE reading targets."""
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -287,17 +313,21 @@ def freeze(
     records = base._completed_records(
         history, cutoff, {}, trees=trees,
         activity_trees=activity_trees, client_cap=client_cap)
-    champion, details = base.champion_forecast(
-        history, trees=trees,
-        activity_trees=activity_trees, client_cap=client_cap)
+    dates = list(pd.date_range(
+        pd.Timestamp(history.columns[-1]) + pd.Timedelta(weeks=1),
+        periods=HORIZON, freq="7D").strftime("%Y-%m-%d"))
+    if reference_dir is not None:
+        champion = _read_pinned_reference(
+            reference_dir, series=len(history), dates=dates)
+    else:
+        champion, _ = base.champion_forecast(
+            history, trees=trees,
+            activity_trees=activity_trees, client_cap=client_cap)
     policies, diagnostic = candidate_forecasts(history, champion, records)
     picked = policies[selection["selected"]]
     output_dir.mkdir(parents=True, exist_ok=True)
     archive = output_dir / "forecast.npz"
     np.savez_compressed(archive, champion=champion, historical_selected=picked)
-    dates = list(pd.date_range(
-        pd.Timestamp(history.columns[-1]) + pd.Timedelta(weeks=1),
-        periods=HORIZON, freq="7D").strftime("%Y-%m-%d"))
     manifest = {
         "phase": 2,
         "selected": selection["selected"],
@@ -312,6 +342,8 @@ def freeze(
         "source_sha256": _sha256(Path(__file__)),
         "completed_oof_origins": diagnostic["oof_origins"],
         "champion": base.CHAMPION_NAME,
+        "original_pr17_reference_sha256": (
+            PINNED_REFERENCE_SHA256 if reference_dir is not None else None),
         "no_target_labels_loaded_during_freeze": True,
         "retrospective_not_blind": True,
     }
@@ -373,6 +405,7 @@ def main() -> None:
     parser.add_argument("--data-dir", type=Path, default=Path("."))
     parser.add_argument("--output", type=Path, default=Path("results/persistent-bias.json"))
     parser.add_argument("--selection", type=Path)
+    parser.add_argument("--reference-dir", type=Path)
     parser.add_argument("--truth", type=Path)
     parser.add_argument("--trees", type=int, default=160)
     parser.add_argument("--activity-trees", type=int, default=100)
@@ -385,7 +418,7 @@ def main() -> None:
             parser.error("--selection is required when freezing")
         freeze(args.data_dir, args.output, args.selection,
                trees=args.trees, activity_trees=args.activity_trees,
-               client_cap=args.client_cap)
+               client_cap=args.client_cap, reference_dir=args.reference_dir)
         return
     if args.operation == "score":
         if args.truth is None:
