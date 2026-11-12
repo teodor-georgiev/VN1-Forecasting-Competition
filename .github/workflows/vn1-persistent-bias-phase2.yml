@@ -58,7 +58,7 @@ jobs:
           source = f"https://raw.githubusercontent.com/SupChains/VN1/{revision}/Phase%202%20-%20Sales.csv"
           with urlopen(source, timeout=60) as response:
               raw = response.read()
-          git_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\\0" + raw).hexdigest()
+          git_blob = hashlib.sha1(b"blob " + str(len(raw)).encode() + bytes([0]) + raw).hexdigest()
           assert git_blob == "714205238d3fcebe8a82b0cec97b28f375914d3b", "Released target blob changed"
           dest = Path(os.environ["RUNNER_TEMP"]) / "released" / "Phase 2 - Sales.csv"
           dest.write_bytes(raw)
