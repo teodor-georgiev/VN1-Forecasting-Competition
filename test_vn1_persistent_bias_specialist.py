@@ -117,3 +117,57 @@ def test_historical_gate_rejects_candidate_when_last_holdout_regresses(monkeypat
     assert receipt["accepted"] is False
     assert receipt["selected"] == "champion"
     assert receipt["target_phase2_seen"] is False
+
+
+def test_frozen_phase2_is_label_blind_aligned_and_integrity_checked(tmp_path, monkeypatch):
+    import json
+
+    phase0 = history()
+    phase0.to_csv(tmp_path / "Phase 0 - Sales.csv", index=False)
+    dates1 = pd.date_range(pd.Timestamp(phase0.columns[-1]) + pd.Timedelta(weeks=1),
+                           periods=13, freq="7D").strftime("%Y-%m-%d")
+    phase1 = pd.concat([phase0.iloc[:, :3],
+                        pd.DataFrame(np.ones((len(phase0), 13)), columns=dates1)], axis=1)
+    phase1.to_csv(tmp_path / "Phase 1 - Sales.csv", index=False)
+    receipt = {
+        "training_origins": list(v.base.TRAIN_EVAL_ORIGINS),
+        "holdout_origin": v.base.HOLDOUT_ORIGIN,
+        "candidate_policies": list(v.POLICIES),
+        "training_scores": {"champion": .52, "group_unscaled25": .50},
+        "holdout_scores": {"champion": .49, "group_unscaled25": .48},
+        "train_fold_wins": {"group_unscaled25": 3},
+        "winner_training_only": "group_unscaled25",
+        "selected": "group_unscaled25", "accepted": True,
+    }
+    selected = tmp_path / "selection.json"
+    selected.write_text(json.dumps(receipt))
+    n = len(phase0)
+    monkeypatch.setattr(v.base, "_completed_records", lambda *a, **k: records(n))
+    monkeypatch.setattr(v.base, "champion_forecast", lambda *a, **k: (
+        np.full((n, 13), 10.0), {}))
+    frozen = tmp_path / "frozen"
+    result = v.freeze(tmp_path, frozen, selected)
+    assert result["no_target_labels_loaded_during_freeze"]
+    assert result["selected"] == "group_unscaled25"
+    assert (frozen / "forecast.npz").is_file()
+
+    dates2 = pd.date_range(pd.Timestamp(dates1[-1]) + pd.Timedelta(weeks=1),
+                           periods=13, freq="7D").strftime("%Y-%m-%d")
+    truth = pd.concat([phase0.iloc[:, :3],
+                       pd.DataFrame(np.full((n, 13), 10.0), columns=dates2)], axis=1)
+    target_path = tmp_path / "Phase 2 - Sales.csv"
+    with pytest.raises(FileNotFoundError):
+        v.score(tmp_path, frozen, target_path)
+    truth.to_csv(target_path, index=False)
+    scores = v.score(tmp_path, frozen, target_path)
+    assert scores["selection"] == "group_unscaled25"
+    assert scores["series"] == n and scores["horizon"] == 13
+    assert set(scores["scores"]) == {"champion", "historical_selected"}
+    assert scores["scores"]["champion"] == 0.0
+
+    with (frozen / "forecast.npz").open("ab") as fp:
+        fp.write(b"tampered")
+    with pytest.raises(ValueError, match="SHA-256"):
+        v.score(tmp_path, frozen, target_path)
+    with pytest.raises(FileExistsError):
+        v.freeze(tmp_path, frozen, selected)
