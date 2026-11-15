@@ -64,11 +64,28 @@ jobs:
           assert all(isinstance(r["vn1"], float) and r["vn1"] >= 0 for r in scores)
           print("VN1_FRAMEWORK_SMOKE=PASS", [(r["framework"], r["vn1"]) for r in scores])
           PY
+      - name: Run representative 256-series pilot on real Phase 0 data
+        run: |
+          python vn1_framework_benchmark.py --origin 157 --sample-size 256 --seed 42 \
+            --output-dir /tmp/vn1-frameworks-pilot --model all
+      - name: Validate representative pilot receipts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          scores = json.loads(Path("/tmp/vn1-frameworks-pilot/scores.json").read_text())
+          assert {x["framework"] for x in scores} == {"sktime","darts","mlforecast"}
+          assert all(x["series"] == 256 and x["period"] == "Phase0_historical" for x in scores)
+          assert all(0 <= x["vn1"] < 10 for x in scores)
+          print("VN1_FRAMEWORK_PILOT=PASS", [(x["framework"], x["vn1"]) for x in scores])
+          PY
       - name: Upload research-only historical pilot receipts
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: vn1-frameworks-historical-smoke
-          path: /tmp/vn1-frameworks-smoke/scores.json
+          path: |
+            /tmp/vn1-frameworks-smoke/scores.json
+            /tmp/vn1-frameworks-pilot/scores.json
           retention-days: 14
           if-no-files-found: error
