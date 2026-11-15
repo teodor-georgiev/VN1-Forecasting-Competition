@@ -33,7 +33,8 @@ def test_full_phase0_fev_windows_align_to_all_official_series(tmp_path: Path):
     # Full catalogue: static category values remain attached to their series.
     full = task.load_full_dataset()
     assert list(full["id"]) == expected_ids
-    assert task.static_columns == list(STATIC_COLUMNS)
+    # FEV canonicalizes feature order: compare the declared category set.
+    assert set(task.static_columns) == set(STATIC_COLUMNS)
     for key, label in zip(KEYS, STATIC_COLUMNS):
         assert list(full[label]) == original[key].astype(str).tolist(), label
     volume_by_fold = {}
