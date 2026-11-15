@@ -1,0 +1,89 @@
+name: VN1 completed-OOF counterfactual expert research
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-counterfactual-expert.yml"
+      - "vn1_counterfactual_expert_gate.py"
+      - "test_vn1_counterfactual_expert_gate.py"
+      - "docs/VN1_COUNTERFACTUAL_GATE.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vn1-counterfactual-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install existing pinned specialist dependencies
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Validate counterfactual gate and original specialist contracts
+        run: |
+          python -m pytest -q test_vn1_counterfactual_expert_gate.py test_vn1_persistent_bias_specialist.py
+
+  full-phase0:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install existing pinned specialist dependencies
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Run 15,053-series rolling OOF expert benchmark
+        run: |
+          python -u vn1_counterfactual_expert_gate.py \
+            --data-dir . --output results/vn1-counterfactual/phase0.json \
+            --trees 160 --activity-trees 100 --client-cap 16
+      - name: Independently verify frozen historical acceptance formula
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path("results/vn1-counterfactual/phase0.json").read_text())
+          assert x["training_origins"] == [118,131,144]
+          assert x["holdout_origin"] == 157
+          assert x["used_phase1_labels"] is False and x["used_phase2_labels"] is False
+          assert x["holdout_reused_exploratory"] is True
+          assert x["incumbent"] == "PR21 group_unscaled25"
+          assert x["policies"] == ["incumbent","oof_recent15","oof_annual15","oof_annual30"]
+          w=x["training_winner"]
+          t=x["training_scores"]
+          h=x["holdout_scores"]
+          wins=x["train_fold_wins"]
+          accepted = bool(w != "incumbent" and t[w] <= t["incumbent"]-0.001
+                          and h[w] <= h["incumbent"]-0.001 and wins[w] >= 2)
+          assert x["accepted"] is accepted
+          assert x["selected"] == (w if accepted else "incumbent")
+          print("VN1_COUNTERFACTUAL_HISTORY_GATE=PASS")
+          print("VN1_COUNTERFACTUAL_WINNER",w,"ACCEPTED",accepted)
+          print("VN1_COUNTERFACTUAL_TRAIN",t)
+          print("VN1_COUNTERFACTUAL_HOLDOUT",h)
+          PY
+      - name: Save aggregate-only research receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-counterfactual-phase0-scores
+          path: results/vn1-counterfactual/phase0.json
+          retention-days: 14
+          if-no-files-found: warn
