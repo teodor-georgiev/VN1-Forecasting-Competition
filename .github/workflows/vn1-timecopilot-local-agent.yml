@@ -1,0 +1,102 @@
+name: VN1 TimeCopilot local agent pilot
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-timecopilot-local-agent.yml"
+      - "vn1_timecopilot_local_pilot.py"
+      - "test_vn1_timecopilot_local_pilot.py"
+      - "vn1_timersi_fev.py"
+      - "docs/VN1_TIMECOPILOT_LOCAL_AGENT.md"
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install local adapter contract dependencies
+        run: python -m pip install --no-cache-dir numpy==2.3.5 pandas==2.2.3 pytest==9.0.2
+      - name: Confirm cutoff, local-only scope and real tool-call receipts
+        run: python -m pytest -q test_vn1_timecopilot_local_pilot.py
+
+  real-local-ollama-agent:
+    needs: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    env:
+      PIP_NO_CACHE_DIR: "1"
+      OLLAMA_HOST: "127.0.0.1:11434"
+      OLLAMA_BASE_URL: "http://127.0.0.1:11434/v1"
+      OLLAMA_MODELS: "/tmp/vn1-timecopilot-ollama-models"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_CONTEXT_LENGTH: "16384"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CPU-only torch and released TimeCopilot
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.10.0"
+          python -m pip install "timecopilot==0.0.41" "pytest==9.0.2"
+          python -m pip check
+          python - <<'PY'
+          import torch
+          import timecopilot
+          print("VN1_TIMECOPILOT_REAL_IMPORT=PASS")
+          print("TORCH_GPU_AVAILABLE", torch.cuda.is_available())
+          PY
+      - name: Install verified Ollama v0.40.16 binary (no install scripts)
+        shell: bash
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get -qq install -y zstd
+          curl --fail --location --retry 3 --retry-delay 2 \
+            --output "$RUNNER_TEMP/ollama-linux-amd64.tar.zst" \
+            "https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-linux-amd64.tar.zst"
+          echo "87bfafb2acbc89b2e6a1be0a9043de6aa75fb450696f86bc426e65fc448f788d  $RUNNER_TEMP/ollama-linux-amd64.tar.zst" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/ollama" "$OLLAMA_MODELS"
+          tar --zstd -xf "$RUNNER_TEMP/ollama-linux-amd64.tar.zst" -C "$RUNNER_TEMP/ollama"
+          rm "$RUNNER_TEMP/ollama-linux-amd64.tar.zst"
+          echo "$RUNNER_TEMP/ollama/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/ollama/bin/ollama" serve > "$RUNNER_TEMP/ollama-server.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:11434/api/tags >/dev/null; then break; fi
+            sleep 2
+          done
+          curl --fail http://127.0.0.1:11434/api/tags >/dev/null
+          "$RUNNER_TEMP/ollama/bin/ollama" pull qwen2.5:3b
+          "$RUNNER_TEMP/ollama/bin/ollama" list
+      - name: Run genuine TimeCopilot agent with all four required tool calls
+        shell: bash
+        timeout-minutes: 30
+        run: |
+          mkdir -p "$RUNNER_TEMP/vn1-timecopilot-pilot"
+          python vn1_timecopilot_local_pilot.py \
+            --origin 157 --sample-size 2 \
+            --llm ollama:qwen2.5:3b \
+            --out "$RUNNER_TEMP/vn1-timecopilot-pilot/receipt.json"
+      - name: Publish frozen research-only pilot receipts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-timecopilot-local-ollama-pilot
+          path: ${{ runner.temp }}/vn1-timecopilot-pilot/
+          retention-days: 7
+          if-no-files-found: error
