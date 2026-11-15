@@ -127,7 +127,9 @@ def darts_forecast(history: np.ndarray, dates: pd.DatetimeIndex) -> np.ndarray:
 def run(args: argparse.Namespace) -> list[dict]:
     ids, history, truth, dates, future = load_origin(args.data_dir, args.origin, args.phase2)
     selected = choose_sample(len(ids), args.sample_size, args.seed)
-    ids, history, truth = ids.iloc[selected].reset_index(drop=True), history[selected], truth[selected]
+    ids, history = ids.iloc[selected].reset_index(drop=True), history[selected]
+    if truth is not None:
+        truth = truth[selected]
     if len(dates) != history.shape[1]:
         raise ValueError("History and date index differ")
     adapters = {"sktime": lambda: sktime_forecast(history, dates),
