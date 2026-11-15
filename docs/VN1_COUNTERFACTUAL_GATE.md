@@ -56,3 +56,28 @@ CI runs full-catalogue Phase 0 only on an isolated GitHub-hosted runner and
 uploads **aggregate scores only**, never product-level forecasts or labels.
 No changes to the existing champion, production files, main branch,
 deployment or live predictions.
+
+## Verified complete Phase 0 result (2026-11-15)
+
+[Successful CI run #43735586625](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43735586625): isolated contracts passed, full 15,053-series replay completed, and the gate was independently recalculated from aggregate score JSON; artifact `vn1-counterfactual-phase0-scores` was retained.
+
+| Predeclared model | Pooled origin 118/131/144 training ↓ | Origin 157 historical holdout ↓ |
+|---|---:|---:|
+| PR21 incumbent | 0.5280916828 | 0.4739655397 |
+| OOF recent mean 15% | 0.5280968618 | **0.4736093686** |
+| OOF year-ago 15% | 0.5268316556 | 0.4738215383 |
+| OOF year-ago 30% | **0.5259158367** | 0.4737708283 |
+
+The training-only winner was `oof_annual30`: training gain
+**0.0021758461**, but later holdout gain just **0.0001947113**,
+which fails the fixed **0.001 absolute holdout improvement** minimum.
+CI verified the frozen decision **`accepted=false, selected=incumbent`**.
+The OOF recent-mean 15% arm had the best late-fold score, but it
+worsened pooled training, and choosing it after seeing that holdout
+would be inappropriate. No Phase 2 comparison was run and no new
+champion is claimed. Because origin 157 has been used by earlier research,
+this exploratory gate cannot establish independent generalization.
+
+**Decision:** retain the existing 0.4691204554 Phase 2 retrospective
+research champion; leave the new code in an unmerged draft PR. A genuinely
+new later target window is needed for fresh validation.
