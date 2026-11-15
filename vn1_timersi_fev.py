@@ -20,13 +20,15 @@ import numpy as np
 import pandas as pd
 
 KEYS = ("Client", "Warehouse", "Product")
+STATIC_COLUMNS = ("client", "warehouse", "product")
 HORIZON = 13
 FOLDS = (92, 105, 118, 131, 144, 157)
 
 
 def read_phase0(path: Path) -> pd.DataFrame:
     frame = pd.read_csv(path)
-    if tuple(frame.columns[:3]) != KEYS or frame.duplicated(list(KEYS)).any():
+    if (tuple(frame.columns[:3]) != KEYS or frame[list(KEYS)].isna().any().any()
+            or frame.duplicated(list(KEYS)).any()):
         raise ValueError("VN1 identifiers must be unique and in official order")
     dates = pd.DatetimeIndex(pd.to_datetime(frame.columns[3:], errors="raise"))
     if len(dates) < FOLDS[-1] + HORIZON:
@@ -45,12 +47,18 @@ def to_fev_long(frame: pd.DataFrame) -> pd.DataFrame:
     n, t = len(frame), len(dates)
     ids = np.array([f"{i:08d}" for i in range(n)], dtype=object)
     values = frame.iloc[:, 3:].to_numpy(dtype=np.float64)
-    if t < FOLDS[-1] + HORIZON or not np.isfinite(values).all() or (values < 0).any():
-        raise ValueError("Invalid historical sales")
+    if (t < FOLDS[-1] + HORIZON or not np.isfinite(values).all()
+            or (values < 0).any() or frame[list(KEYS)].isna().any().any()):
+        raise ValueError("Invalid historical sales or identifiers")
+    static = {
+        label: np.repeat(frame[key].astype(str).to_numpy(), t)
+        for label, key in zip(STATIC_COLUMNS, KEYS)
+    }
     return pd.DataFrame({
         "id": np.repeat(ids, t),
         "timestamp": np.tile(dates.to_numpy(), n),
         "target": values.reshape(-1),
+        **static,
     })
 
 
@@ -76,6 +84,7 @@ def export_phase0(data_dir: Path, parquet: Path) -> dict:
         "weeks": frame.shape[1] - len(KEYS),
         "origins": list(FOLDS),
         "horizon": HORIZON,
+        "static_columns": list(STATIC_COLUMNS),
         "source_sha256": sha256(source),
         "dataset_sha256": sha256(parquet),
         "phase1_or_phase2_labels_loaded": False,
@@ -100,6 +109,7 @@ def build_task(parquet: Path):
         id_column="id",
         timestamp_column="timestamp",
         target="target",
+        static_columns=list(STATIC_COLUMNS),
         task_name="vn1-phase0-timersi-historical",
         eval_metric="MASE",  # TimeRSI selection uses its own objective.
     )
@@ -127,6 +137,7 @@ def run_timersi(parquet: Path, checkpoint: Path, output_dir: Path) -> dict:
     """Execute upstream TimeRSI; no provider secrets or checkpoints are stored."""
     manifest = json.loads(parquet.with_suffix(".manifest.json").read_text(encoding="utf-8"))
     if (manifest.get("origins") != list(FOLDS)
+            or manifest.get("static_columns") != list(STATIC_COLUMNS)
             or manifest.get("dataset_sha256") != sha256(parquet)
             or manifest.get("scope") != "Phase 0 historical only"):
         raise ValueError("Unrecognized or modified historical input")
