@@ -6,5 +6,5 @@ lightgbm==4.6.0
 pytest==9.0.2
 scikit-learn==1.7.2
 sktime==0.40.1
-mlforecast>=1.0,<2
-darts[notorch]>=0.41,<1
+mlforecast==1.1.0
+darts[notorch]==0.48.1
