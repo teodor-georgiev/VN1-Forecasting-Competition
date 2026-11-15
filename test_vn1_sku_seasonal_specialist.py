@@ -98,7 +98,17 @@ def test_historical_gate_rejects_failure_on_later_fold(monkeypatch):
         pred = {"incumbent": existing.copy()}
         at_holdout = past.shape[1] - 3 == v.base.HOLDOUT_ORIGIN
         for name in v.CANDIDATES[1:]:
-            pred[name] = np.full_like(existing, 5. if at_holdout else 1.)
+            if at_holdout:
+                candidate = np.full_like(existing, 5.)
+            else:
+                # Synthetic training predictions match the known fixture
+                # while the later holdout intentionally deteriorates.
+                candidate = np.full_like(existing, 1.)
+                candidate[0, :] = 40.
+                candidate[1, :] = 20.
+                candidate[2, :] = 10.
+                candidate[-1, :] = 0.
+            pred[name] = candidate
         return pred, {}
 
     monkeypatch.setattr(v.base, "_completed_records", mock_records)
