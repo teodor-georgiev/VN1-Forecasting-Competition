@@ -6,6 +6,7 @@ on:
       - ".github/workflows/vn1-timersi-contracts.yml"
       - "vn1_timersi_fev.py"
       - "test_vn1_timersi_fev.py"
+      - "test_vn1_timersi_fev_real.py"
       - "requirements-vn1.txt"
       - "docs/VN1_TIMERSI_HISTORICAL.md"
 
@@ -29,3 +30,23 @@ jobs:
         run: python -m pip install -r requirements-vn1.txt
       - name: Test leak guards, scoring and upstream task interface
         run: python -m pytest -q test_vn1_timersi_fev.py
+
+  real-fev-historical-parity:
+    needs: adapter-contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned baseline and genuine upstream FEV
+        run: |
+          python -m pip install -r requirements-vn1.txt
+          python -m pip install "datasets==4.8.5" "fev @ git+https://github.com/autogluon/fev.git@bd0502bb73d3cf0b7e5998a6cdadff36ec4c5423"
+      - name: Verify 15,053 original series against every FEV Phase-0 window
+        run: python -m pytest -q -s test_vn1_timersi_fev_real.py
