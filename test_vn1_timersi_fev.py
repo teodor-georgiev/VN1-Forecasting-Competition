@@ -13,6 +13,7 @@ import pytest
 from vn1_timersi_fev import (
     FOLDS,
     HORIZON,
+    STATIC_COLUMNS,
     build_task,
     export_phase0,
     official_fold_components,
@@ -38,7 +39,7 @@ def phase0_fixture(n: int = 2) -> pd.DataFrame:
 def test_phase0_long_format_preserves_all_observations_and_series_order():
     frame = phase0_fixture()
     long = to_fev_long(frame)
-    assert list(long.columns) == ["id", "timestamp", "target"]
+    assert list(long.columns) == ["id", "timestamp", "target", *STATIC_COLUMNS]
     assert len(long) == 2 * 170
     assert long["id"].iloc[0] == "00000000"
     assert long["id"].iloc[170] == "00000001"
@@ -46,6 +47,10 @@ def test_phase0_long_format_preserves_all_observations_and_series_order():
     assert long["timestamp"].iloc[170] == pd.Timestamp("2020-07-06")
     assert long["target"].iloc[0] == 0
     assert long["target"].iloc[170] == 170
+    for label, key in zip(STATIC_COLUMNS, ("Client", "Warehouse", "Product")):
+        assert long[label].iloc[0] == str(frame[key].iloc[0])
+        assert long[label].iloc[170] == str(frame[key].iloc[1])
+        assert long[label].iloc[0] != ""
     assert FOLDS == (92, 105, 118, 131, 144, 157)
     assert FOLDS[-1] + HORIZON == 170
 
@@ -104,6 +109,7 @@ def test_export_never_reads_phase1_or_phase2(tmp_path, monkeypatch):
     assert receipt["origins"] == list(FOLDS)
     assert receipt["weeks"] == 170
     assert receipt["series"] == 2
+    assert receipt["static_columns"] == list(STATIC_COLUMNS)
     manifest = json.loads(parquet.with_suffix(".manifest.json").read_text())
     assert manifest == receipt
     with pytest.raises(FileExistsError):
@@ -124,4 +130,5 @@ def test_fev_task_uses_only_completed_historical_origins(monkeypatch, tmp_path):
     assert task.horizon == 13
     assert task.min_context_length == 65
     assert task.target == "target"
+    assert task.static_columns == list(STATIC_COLUMNS)
     assert task.dataset_path == str(parquet.resolve())
