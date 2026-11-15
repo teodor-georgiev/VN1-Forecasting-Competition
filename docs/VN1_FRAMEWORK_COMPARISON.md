@@ -4,26 +4,42 @@ Compare three actual library adapters against the **official VN1 metric**, not a
 each library's own metric. The script does **not** modify the incumbent,
 submission files, or any production pipeline.
 
-## Status
+## Verified 2026-11-15 results
 
-- New comparison harness: implemented on an isolated feature branch.
-- **Passed CI (2026-11-15):** GitHub Actions run #43724545500 verified 4
-  contract tests and an 8-series real-history smoke for all three libraries.
-  https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43724545500
-- Tested versions: sktime 0.40.1, Darts 0.48.1 and MLForecast 1.1.0,
-  with scikit-learn 1.7.2 in an isolated CPU-only environment.
-- **Actual 8-series sample, historical origin 157:** sktime mean13
-  official VN1 score 1.3870910698, Darts global LGBM160 3.3488678193,
-  MLForecast global LGBM160 3.3488678193. These are **only installation
-  and adapter smoke receipts**, not benchmark conclusions: the tiny
-  sample is not representative and cannot be compared to the 15,053-series
-  best score 0.4691204554.
-- **Still pending:** full-catalogue 15,053-series replay for multiple historical
-  origins and a separately frozen retrospective Phase 2 check.
-- Champion: earlier 0.477093 LightGBM/statistical ensemble is **not the
-  latest**. The owner's reported ~0.467 result is the provisional reference;
-  locate the exact frozen receipt before certifying a head-to-head comparison.
-  Do not assume an older repository README describes the best result.
+The full runs completed on GitHub-hosted isolated CPU runners. Both ran
+against all **15,053 client/warehouse/product series**, forecasting **13 weeks**
+with the official error-plus-absolute-global-bias metric (lower is better).
+
+| Framework recipe | Phase 0 historical fold 157 | Phase 2 retrospective |
+|---|---:|---:|
+| sktime NaiveForecaster (13-week mean) | 0.5224954971254803 | 0.8131824077399716 |
+| Darts LightGBM160 (13 lags) | 0.5152173124693071 | 0.7211724737957992 |
+| MLForecast LightGBM160 (13 lags) | 0.5152173124693071 | 0.7211724737957992 |
+
+The *existing, separately verified* Phase 2 persistent-bias specialist is
+**0.4691204554267017** ([PR #21](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/pull/21)).
+These simple three recipes do not beat it. Comparing this champion to the
+Phase 0 fold would be invalid; the Phase 2 column is the matched period.
+
+- [Full historical fold 157 CI run #43727126832](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43727126832): passed; tests and every full-model step succeeded.
+- [Full Phase 2 freeze-then-score CI run #43727609001](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43727609001): passed; all forecasts and SHA-256 manifests existed before published Phase 2 labels were retrieved, the source Git blob integrity passed, and all three outputs passed alignment and official score checks.
+- [Earlier 256-series pilot #43726833973](https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43726833973) was a smoke test only and its results are not comparable to full-catalogue metrics.
+- Exact CPU dependency pins: sktime 0.40.1, Darts 0.48.1, MLForecast 1.1.0, scikit-learn 1.7.2.
+- No champion replacement, no production model modification, no merge, no deployment.
+
+These are *representative forecasting recipes*, not equivalent tests of a
+library's maximum accuracy. The sktime arm is a local statistical baseline,
+while Darts and MLForecast implement global LightGBM with matching 13-lag
+designs and 160 estimators. Their identical forecasts indicate no distinct
+accuracy gain from switching libraries under this configuration; MLForecast
+was much faster on the two full-catalogue replays. The positive Phase 2
+signed forecast bias (+0.15285 for Darts and MLForecast; +0.20448 for sktime)
+is a large contributor to their official Phase 2 scores.
+
+**Research qualification:** Phase 2 actuals were published previously and
+have informed earlier work; this is *retrospective*, not an independent blind
+competition submission. There is no evidence that any of the three simple
+recipes improves the existing champion.
 
 ## Methodology
 
@@ -94,9 +110,7 @@ separate Phase 2 scoring is a retrospective replay, not a blind
 out-of-sample evaluation, because the public target labels have influenced
 earlier research.
 
-The pull-request workflow `.github/workflows/vn1-frameworks.yml`
-uses a GitHub-hosted runner for contracts and the eight-series smoke test.
-That job passed and uploaded artifact `vn1-frameworks-historical-smoke`.
-It is **not** the full-catalogue benchmark; results from this tiny subset
-should never be extrapolated to the full 15,053 series. No unreviewed code is run on
+The isolated CI workflows now include the 8-series smoke, 256-series pilot,
+full historical fold, and a separate Phase 2 forecast-freeze/scoring sequence.
+See the verified run links and exact metrics above. No unreviewed code ran on
 self-hosted infrastructure. No model was merged or promoted.
