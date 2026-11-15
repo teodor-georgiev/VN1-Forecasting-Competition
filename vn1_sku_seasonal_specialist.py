@@ -28,9 +28,9 @@ def annual_signals(history: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     At origin T, previous-year future covers [T-52, T-39), compared with
     previous-year preceding weeks [T-65, T-52). This never touches [T, T+13).
     """
-    y = base._history_matrix(history)
-    if y.shape[1] < 65:
+    if history.shape[1] - len(KEYS) < 65:
         raise ValueError("Need 65 observed weeks for annual future comparison")
+    y = base._history_matrix(history)
     old_before = y[:, -65:-52].sum(axis=1)
     old_future = y[:, -52:-39].sum(axis=1)
     own = np.log((old_future + 5.0) / (old_before + 5.0))
