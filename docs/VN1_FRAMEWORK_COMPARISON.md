@@ -7,12 +7,19 @@ submission files, or any production pipeline.
 ## Status
 
 - New comparison harness: implemented on an isolated feature branch.
-- Contract tests cover official scoring, deterministic sampling, historical cutoff,
-  and Phase 2 separate freeze/score with tamper checks. New checks need CI replay.
-- sktime, Darts, MLForecast full library execution: **NOT YET VERIFIED**.
-  Pull-request CI installs all three and executes an 8-series historical smoke.
-  Current approved VPS access returned internal errors. Do not report model
-  accuracy before a successful real-data run.
+- **Passed CI (2026-11-15):** GitHub Actions run #43724545500 verified 4
+  contract tests and an 8-series real-history smoke for all three libraries.
+  https://github.com/teodor-georgiev/VN1-Forecasting-Competition/actions/runs/43724545500
+- Tested versions: sktime 0.40.1, Darts 0.48.1 and MLForecast 1.1.0,
+  with scikit-learn 1.7.2 in an isolated CPU-only environment.
+- **Actual 8-series sample, historical origin 157:** sktime mean13
+  official VN1 score 1.3870910698, Darts global LGBM160 3.3488678193,
+  MLForecast global LGBM160 3.3488678193. These are **only installation
+  and adapter smoke receipts**, not benchmark conclusions: the tiny
+  sample is not representative and cannot be compared to the 15,053-series
+  best score 0.4691204554.
+- **Still pending:** full-catalogue 15,053-series replay for multiple historical
+  origins and a separately frozen retrospective Phase 2 check.
 - Champion: earlier 0.477093 LightGBM/statistical ensemble is **not the
   latest**. The owner's reported ~0.467 result is the provisional reference;
   locate the exact frozen receipt before certifying a head-to-head comparison.
@@ -88,7 +95,8 @@ out-of-sample evaluation, because the public target labels have influenced
 earlier research.
 
 The pull-request workflow `.github/workflows/vn1-frameworks.yml`
-uses a GitHub-hosted runner to run the contract tests and an eight-series
-historical real-library smoke test. It is **not** the full-catalogue benchmark,
-which must run only after the smoke tests pass. No unreviewed code is run on
+uses a GitHub-hosted runner for contracts and the eight-series smoke test.
+That job passed and uploaded artifact `vn1-frameworks-historical-smoke`.
+It is **not** the full-catalogue benchmark; results from this tiny subset
+should never be extrapolated to the full 15,053 series. No unreviewed code is run on
 self-hosted infrastructure. No model was merged or promoted.
