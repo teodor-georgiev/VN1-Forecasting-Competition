@@ -21,8 +21,12 @@ References:
 
 The source is ONLY `Phase 0 - Sales.csv`. The CSV is converted to an
 `id, timestamp, target` long-table Parquet file understood by FEV.
-Identifiers are deterministic zero-padded row positions (not customer keys);
-their order matches the original file.
+FEV series IDs are deterministic zero-padded row positions; their order matches
+the original CSV. Client, Warehouse and Product are separately preserved as
+static categorical features (`client`, `warehouse`, `product`) so TimeRSI can
+use the competition's original hierarchy without Phase-1 or Phase-2 data.
+The exported Parquet contains identifiers from the source file: keep research
+outputs in an access-controlled location and do not log individual keys.
 
 The FEV task has 13-week horizons and **six Phase-0 historical origins
 92/105/118/131/144/157**, with one additional 13-week test window at each
