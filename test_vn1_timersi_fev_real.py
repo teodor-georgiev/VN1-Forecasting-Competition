@@ -11,7 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
-from vn1_timersi_fev import FOLDS, HORIZON, build_task, export_phase0, official_fold_components, read_phase0
+from vn1_timersi_fev import (FOLDS, HORIZON, KEYS, STATIC_COLUMNS, build_task,
+                             export_phase0, official_fold_components, read_phase0)
 
 
 def test_full_phase0_fev_windows_align_to_all_official_series(tmp_path: Path):
@@ -23,11 +24,18 @@ def test_full_phase0_fev_windows_align_to_all_official_series(tmp_path: Path):
     assert manifest["weeks"] == 170
     assert manifest["origins"] == list(FOLDS)
     assert manifest["phase1_or_phase2_labels_loaded"] is False
+    assert manifest["static_columns"] == list(STATIC_COLUMNS)
     assert json.loads(parquet.with_suffix(".manifest.json").read_text()) == manifest
 
     task = build_task(parquet)
     assert tuple(task.cutoffs) == FOLDS
     expected_ids = [f"{i:08d}" for i in range(len(original))]
+    # Full catalogue: static category values remain attached to their series.
+    full = task.load_full_dataset()
+    assert list(full["id"]) == expected_ids
+    assert task.static_columns == list(STATIC_COLUMNS)
+    for key, label in zip(KEYS, STATIC_COLUMNS):
+        assert list(full[label]) == original[key].astype(str).tolist(), label
     volume_by_fold = {}
     for index, origin in enumerate(FOLDS):
         window = task.get_window(index)
