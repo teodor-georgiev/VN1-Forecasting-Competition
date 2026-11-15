@@ -6,6 +6,7 @@ Scoring follows functions_for_participants.py (MAE + absolute aggregate bias).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -39,11 +40,13 @@ def load_origin(data_dir: Path, origin: int, phase2: bool):
         phase1 = read_sales(data_dir / "Phase 1 - Sales.csv")
         if not phase0[KEYS].equals(phase1[KEYS]):
             raise ValueError("Phase 0/1 series alignment differs")
+        # Phase 2 *truth is not opened* by any forecasting code.
+        phase0_last = pd.Timestamp(phase0.columns[-1])
+        phase1_first = pd.Timestamp(phase1.columns[3])
+        if phase1_first != phase0_last + pd.Timedelta(weeks=1):
+            raise ValueError("Phase 0 and Phase 1 dates are not consecutive")
         history = pd.concat([phase0, phase1.iloc[:, 3:]], axis=1)
-        actual = read_sales(data_dir / "Phase 2 - Sales.csv")
-        if not history[KEYS].equals(actual[KEYS]):
-            raise ValueError("Phase 2 series alignment differs")
-        truth = actual.iloc[:, 3:].to_numpy(dtype=np.float64)
+        truth = None
     else:
         if origin < 52 or origin + HORIZON > len(phase0.columns) - 3:
             raise ValueError("Historical origin must leave 13 observed target weeks")
@@ -51,8 +54,6 @@ def load_origin(data_dir: Path, origin: int, phase2: bool):
         truth = phase0.iloc[:, 3 + origin:3 + origin + HORIZON].to_numpy(dtype=np.float64)
     dates = pd.DatetimeIndex(pd.to_datetime(history.columns[3:]))
     future = pd.date_range(dates[-1] + pd.Timedelta(weeks=1), periods=HORIZON, freq="W-MON")
-    if phase2 and list(actual.columns[3:]) != list(future.strftime("%Y-%m-%d")):
-        raise ValueError("Phase 2 forecast dates differ")
     return (history[KEYS].copy(), history.iloc[:, 3:].to_numpy(dtype=np.float64),
             truth, dates, future)
 
@@ -134,26 +135,89 @@ def run(args: argparse.Namespace) -> list[dict]:
                 "mlforecast": lambda: mlforecast_forecast(history, dates, future)}
     choices = list(adapters) if args.model == "all" else [args.model]
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    if any(args.output_dir.iterdir()):
+        raise ValueError("Choose a new empty output directory to preserve frozen results")
     receipts = []
+    hashes = {}
     for name in choices:
         start = time.perf_counter()
         forecast = np.asarray(adapters[name](), dtype=np.float64)
-        if forecast.shape != truth.shape or not np.isfinite(forecast).all():
+        if forecast.shape != (len(ids), HORIZON) or not np.isfinite(forecast).all():
             raise ValueError(f"{name} produced invalid predictions")
         forecast = np.maximum(forecast, 0.0)
         receipt = {"framework": name, "model": "mean13" if name == "sktime" else "LGBM160",
                    "period": "Phase2_retrospective" if args.phase2 else "Phase0_historical",
                    "origin_week": len(dates), "series": len(ids), "seed": args.seed,
-                   "seconds": round(time.perf_counter() - start, 3),
-                   **vn1_score(forecast, truth)}
+                   "seconds": round(time.perf_counter() - start, 3)}
+        if truth is not None:
+            receipt.update(vn1_score(forecast, truth))
+        else:
+            receipt["status"] = "frozen_unscored"
         table = ids.copy()
         for j, date in enumerate(future):
             table[date.strftime("%Y-%m-%d")] = forecast[:, j]
-        table.to_csv(args.output_dir / f"{name}_forecast.csv", index=False)
+        out = args.output_dir / f"{name}_forecast.csv"
+        table.to_csv(out, index=False)
+        hashes[name] = {"file": out.name, "sha256": hashlib.sha256(out.read_bytes()).hexdigest()}
         receipts.append(receipt)
         print(json.dumps(receipt, sort_keys=True), flush=True)
     (args.output_dir / "scores.json").write_text(json.dumps(receipts, indent=2) + "\n", encoding="utf-8")
+    if args.phase2:
+        manifest = {
+            "phase": "Phase 2",
+            "status": "frozen_unscored",
+            "series_count": len(ids),
+            "sample_indices": [int(i) for i in selected],
+            "forecast_dates": list(future.strftime("%Y-%m-%d")),
+            "source_hashes": {
+                name: hashlib.sha256((args.data_dir / name).read_bytes()).hexdigest()
+                for name in ("Phase 0 - Sales.csv", "Phase 1 - Sales.csv")
+            },
+            "forecasts": hashes,
+        }
+        (args.output_dir / "manifest.json").write_text(
+            json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return receipts
+
+
+def score_phase2(data_dir: Path, output_dir: Path) -> list[dict]:
+    """Independently score immutable Phase 2 forecast CSVs after forecasting."""
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("phase") != "Phase 2" or manifest.get("status") != "frozen_unscored":
+        raise ValueError("Not a Phase 2 frozen prediction manifest")
+    for name, expected in manifest["source_hashes"].items():
+        file = data_dir / name
+        if hashlib.sha256(file.read_bytes()).hexdigest() != expected:
+            raise ValueError(f"Source data changed after freezing: {name}")
+    actual = read_sales(data_dir / "Phase 2 - Sales.csv")
+    indices = np.asarray(manifest["sample_indices"], dtype=np.int64)
+    if (len(indices) != manifest["series_count"] or len(indices) == 0
+            or np.any(np.diff(indices) <= 0) or indices[0] < 0 or indices[-1] >= len(actual)):
+        raise ValueError("Invalid sample indices in manifest")
+    actual = actual.iloc[indices].reset_index(drop=True)
+    expected_dates = manifest["forecast_dates"]
+    if list(actual.columns[3:]) != expected_dates or len(expected_dates) != HORIZON:
+        raise ValueError("Incorrect Phase 2 target dates")
+    results = []
+    for name, info in manifest["forecasts"].items():
+        if name not in ("sktime", "darts", "mlforecast") or info["file"] != f"{name}_forecast.csv":
+            raise ValueError("Unrecognized model or unsafe forecast path")
+        file = output_dir / info["file"]
+        if hashlib.sha256(file.read_bytes()).hexdigest() != info["sha256"]:
+            raise ValueError(f"Frozen output hash mismatch for {name}")
+        predicted = read_sales(file)
+        if list(predicted.columns[3:]) != expected_dates or not predicted[KEYS].equals(actual[KEYS]):
+            raise ValueError(f"Frozen output rows or dates differ for {name}")
+        result = {"framework": name, "period": "Phase2_retrospective",
+                  "series": len(actual), **vn1_score(predicted.iloc[:, 3:].to_numpy(),
+                                                     actual.iloc[:, 3:].to_numpy())}
+        results.append(result)
+        print(json.dumps(result, sort_keys=True), flush=True)
+    out = output_dir / "phase2_scores.json"
+    if out.exists():
+        raise FileExistsError("Phase 2 score receipt already exists; do not overwrite")
+    out.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+    return results
 
 
 def main() -> None:
@@ -164,8 +228,14 @@ def main() -> None:
     parser.add_argument("--sample-size", type=int, default=256, help="0 uses all 15,053 series")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--origin", type=int, default=157)
-    parser.add_argument("--phase2", action="store_true", help="Requires released Phase 2 targets; retrospective only")
-    run(parser.parse_args())
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--phase2", action="store_true", help="Freeze Phase 2 predictions WITHOUT opening Phase 2 labels")
+    mode.add_argument("--score-phase2", action="store_true", help="Score already-frozen Phase 2 predictions in a separate invocation")
+    args = parser.parse_args()
+    if args.score_phase2:
+        score_phase2(args.data_dir, args.output_dir)
+    else:
+        run(args)
 
 
 if __name__ == "__main__":
