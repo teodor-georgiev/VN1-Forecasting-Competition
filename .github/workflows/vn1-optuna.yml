@@ -1,0 +1,55 @@
+name: VN1 Optuna rolling-origin optimization
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-optuna.yml"
+      - "vn1_optuna_rolling.py"
+      - "test_vn1_optuna_rolling.py"
+      - "requirements-vn1-optuna.txt"
+      - "vn1_lgbm_ensemble.py"
+      - "vn1_from_scratch.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-optuna.txt
+      - run: python -m pip install -r requirements-vn1-optuna.txt
+      - run: python -m pytest -q test_vn1_optuna_rolling.py test_vn1_lgbm_ensemble.py
+
+  optuna-60-trials:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-optuna.txt
+      - run: python -m pip install -r requirements-vn1-optuna.txt
+      - name: Run 60 historical Optuna trials with isolated final holdout
+        run: |
+          set -euo pipefail
+          python -u vn1_optuna_rolling.py --trials 60 --max-series 512 --max-trees 400 \
+            --output VN1_Optuna_60_results.json | tee VN1_Optuna_60_summary.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vn1-optuna-60-rolling-fold-results
+          path: |
+            VN1_Optuna_60_results.json
+            VN1_Optuna_60_summary.log
+          if-no-files-found: warn
+          retention-days: 21
