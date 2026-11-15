@@ -1,5 +1,6 @@
-# Isolated research extras. Pin exact successful versions after the first runner replay.
+# Optional research dependencies, installed only in the comparison environment.
+# Darts' LightGBMModel needs the [notorch] extra; don't pull torch for this CPU test.
 -r requirements-vn1.txt
 sktime>=0.39,<1
 mlforecast>=1.0,<2
-darts>=0.35,<1
+darts[notorch]>=0.41,<1
