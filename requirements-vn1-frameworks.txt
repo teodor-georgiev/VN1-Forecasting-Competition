@@ -1,0 +1,5 @@
+# Isolated research extras. Pin exact successful versions after the first runner replay.
+-r requirements-vn1.txt
+sktime>=0.39,<1
+mlforecast>=1.0,<2
+darts>=0.35,<1
