@@ -7,12 +7,12 @@ submission files, or any production pipeline.
 ## Status
 
 - New comparison harness: implemented on an isolated feature branch.
-- Scoring, deterministic sampling, and cutoff synthetic unit tests: 3 passed
-  in an isolated local environment with NumPy/pandas/pytest.
-- sktime, Darts, MLForecast full library execution: **NOT YET RUN**.
-  Current approved VPS access returned internal errors; this isolated
-  development environment lacked the three packages and could not download
-  them. Do not report benchmark scores before a real run.
+- Contract tests cover official scoring, deterministic sampling, historical cutoff,
+  and Phase 2 separate freeze/score with tamper checks. New checks need CI replay.
+- sktime, Darts, MLForecast full library execution: **NOT YET VERIFIED**.
+  Pull-request CI installs all three and executes an 8-series historical smoke.
+  Current approved VPS access returned internal errors. Do not report model
+  accuracy before a successful real-data run.
 - Champion: earlier 0.477093 LightGBM/statistical ensemble is **not the
   latest**. The owner's reported ~0.467 result is the provisional reference;
   locate the exact frozen receipt before certifying a head-to-head comparison.
@@ -64,16 +64,31 @@ python vn1_framework_benchmark.py --origin 144 --sample-size 0 --output-dir /tmp
 python vn1_framework_benchmark.py --origin 157 --sample-size 0 --output-dir /tmp/vn1_fw_full_157
 ```
 
-To score the fixed 13-week Phase 2 forecasts on published truth
-(`Phase 2 - Sales.csv` required), run separately and label results retrospective:
+For Phase 2, the training invocation **cannot access Phase 2 targets** and
+writes a SHA-256 manifest of the immutable forecasts. Use a new empty output
+directory and DO NOT place the actuals in the forecasting process:
 
 ```bash
 python vn1_framework_benchmark.py --phase2 --sample-size 0 --output-dir /tmp/vn1_fw_phase2
 ```
 
-Results are stored as `scores.json` and a column-aligned CSV per model.
-Verify the expected identifier order, dates, finite predictions, and
-full-catalogue coverage before using results. Do not compare a partial-sample
-score against a full-catalogue champion score.
+Only **after** forecasts and their manifest have been saved, retrieve the
+pinned released `Phase 2 - Sales.csv` and run the separate scorer:
 
-No workflow has been dispatched, no code merged, no model promoted.
+```bash
+python vn1_framework_benchmark.py --score-phase2 --output-dir /tmp/vn1_fw_phase2
+```
+
+The scorer verifies source-file and forecast SHA-256 hashes, sample indices,
+series identity, and target dates before writing `phase2_scores.json`.
+Repeated scoring cannot overwrite the prior receipt. Historical scores
+are written to `scores.json`, along with aligned CSVs. Note: even this
+separate Phase 2 scoring is a retrospective replay, not a blind
+out-of-sample evaluation, because the public target labels have influenced
+earlier research.
+
+The pull-request workflow `.github/workflows/vn1-frameworks.yml`
+uses a GitHub-hosted runner to run the contract tests and an eight-series
+historical real-library smoke test. It is **not** the full-catalogue benchmark,
+which must run only after the smoke tests pass. No unreviewed code is run on
+self-hosted infrastructure. No model was merged or promoted.
