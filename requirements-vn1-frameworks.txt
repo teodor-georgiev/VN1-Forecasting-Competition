@@ -1,6 +1,10 @@
-# Isolated research extras; pin resolved versions after a successful runner replay.
--r requirements-vn1.txt
-sktime>=0.39,<1
-mlforecast>=1.0,<2
-# Since Darts 0.41, the notorch extra includes LightGBM without PyTorch models.
-"darts[notorch]>=0.41,<1"
+# Isolated CPU-only comparison environment; never alter the champion pins.
+# sktime 0.40 requires scikit-learn <1.8, unlike the existing VN1 pipeline.
+numpy==2.3.5
+pandas==2.2.3
+lightgbm==4.6.0
+pytest==9.0.2
+scikit-learn==1.7.2
+sktime==0.40.1
+mlforecast==1.1.0
+darts[notorch]==0.48.1
