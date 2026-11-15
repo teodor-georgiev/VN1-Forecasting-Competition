@@ -1,0 +1,74 @@
+name: VN1 full-catalogue framework replay (research only)
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-frameworks-full.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  full-historical-fold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements-vn1.txt
+            requirements-vn1-frameworks.txt
+      - name: Install isolated, version-pinned CPU forecasting frameworks
+        run: python -m pip install -r requirements-vn1-frameworks.txt
+      - name: Verify frozen historical scoring contracts
+        run: python -m pytest -q test_vn1_framework_benchmark.py
+      - name: Run sktime on all 15,053 series at Phase 0 origin 157
+        run: |
+          python vn1_framework_benchmark.py --origin 157 --sample-size 0 --seed 42 \
+            --model sktime --output-dir /tmp/vn1-frameworks-full-sktime
+      - name: Run Darts on same full historical fold
+        run: |
+          python vn1_framework_benchmark.py --origin 157 --sample-size 0 --seed 42 \
+            --model darts --output-dir /tmp/vn1-frameworks-full-darts
+      - name: Run MLForecast on same full historical fold
+        run: |
+          python vn1_framework_benchmark.py --origin 157 --sample-size 0 --seed 42 \
+            --model mlforecast --output-dir /tmp/vn1-frameworks-full-mlforecast
+      - name: Assemble and validate independent score receipts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          names = ("sktime", "darts", "mlforecast")
+          results = []
+          for name in names:
+              p = Path(f"/tmp/vn1-frameworks-full-{name}/scores.json")
+              result, = json.loads(p.read_text())
+              assert result["framework"] == name
+              assert result["series"] == 15053 and result["origin_week"] == 157
+              assert result["period"] == "Phase0_historical"
+              assert result["vn1"] >= 0
+              results.append(result)
+          Path("/tmp/vn1-frameworks-full-summary.json").write_text(
+              json.dumps(results, indent=2) + "\n")
+          print("VN1_15053_SERIES_REPLAY=PASS")
+          for result in results:
+              print(result["framework"], result["vn1"], result["seconds"])
+          PY
+      - name: Upload research-only full historical score receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-frameworks-full-historical-origin157
+          path: |
+            /tmp/vn1-frameworks-full-sktime/scores.json
+            /tmp/vn1-frameworks-full-darts/scores.json
+            /tmp/vn1-frameworks-full-mlforecast/scores.json
+            /tmp/vn1-frameworks-full-summary.json
+          if-no-files-found: warn
+          retention-days: 14

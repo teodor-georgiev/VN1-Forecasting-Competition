@@ -1,0 +1,91 @@
+name: VN1 forecasting framework comparison
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-frameworks.yml"
+      - "vn1_framework_benchmark.py"
+      - "test_vn1_framework_benchmark.py"
+      - "requirements-vn1-frameworks.txt"
+      - "docs/VN1_FRAMEWORK_COMPARISON.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1.txt
+      - name: Install pinned baseline dependencies
+        run: python -m pip install -r requirements-vn1.txt
+      - name: Verify scoring, alignment, freeze and immutability
+        run: python -m pytest -q test_vn1_framework_benchmark.py
+
+  library-smoke:
+    needs: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements-vn1.txt
+            requirements-vn1-frameworks.txt
+      - name: Install optional forecasting frameworks (CPU only)
+        run: python -m pip install -r requirements-vn1-frameworks.txt
+      - name: Run real historical-data 8-series smoke, same fold for all models
+        run: |
+          python vn1_framework_benchmark.py --origin 157 --sample-size 8 --seed 42 \
+            --output-dir /tmp/vn1-frameworks-smoke --model all
+      - name: Confirm three separate score receipts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("/tmp/vn1-frameworks-smoke/scores.json")
+          scores = json.loads(p.read_text())
+          assert {r["framework"] for r in scores} == {"sktime", "darts", "mlforecast"}
+          assert all(r["series"] == 8 and r["period"] == "Phase0_historical" for r in scores)
+          assert all(isinstance(r["vn1"], float) and r["vn1"] >= 0 for r in scores)
+          print("VN1_FRAMEWORK_SMOKE=PASS", [(r["framework"], r["vn1"]) for r in scores])
+          PY
+      - name: Run representative 256-series pilot on real Phase 0 data
+        run: |
+          python vn1_framework_benchmark.py --origin 157 --sample-size 256 --seed 42 \
+            --output-dir /tmp/vn1-frameworks-pilot --model all
+      - name: Validate representative pilot receipts
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          scores = json.loads(Path("/tmp/vn1-frameworks-pilot/scores.json").read_text())
+          assert {x["framework"] for x in scores} == {"sktime","darts","mlforecast"}
+          assert all(x["series"] == 256 and x["period"] == "Phase0_historical" for x in scores)
+          assert all(0 <= x["vn1"] < 10 for x in scores)
+          print("VN1_FRAMEWORK_PILOT=PASS", [(x["framework"], x["vn1"]) for x in scores])
+          PY
+      - name: Upload research-only historical pilot receipts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-frameworks-historical-smoke
+          path: |
+            /tmp/vn1-frameworks-smoke/scores.json
+            /tmp/vn1-frameworks-pilot/scores.json
+          retention-days: 14
+          if-no-files-found: error
