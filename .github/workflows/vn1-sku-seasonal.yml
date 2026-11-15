@@ -1,0 +1,91 @@
+name: VN1 high-volume SKU seasonal research
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vn1-sku-seasonal.yml"
+      - "vn1_sku_seasonal_specialist.py"
+      - "test_vn1_sku_seasonal_specialist.py"
+      - "docs/VN1_SKU_SEASONAL_SPECIALIST.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vn1-sku-seasonal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install existing pinned specialist dependencies
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Validate historical features and fixed selection
+        run: |
+          python -m pytest -q test_vn1_sku_seasonal_specialist.py test_vn1_persistent_bias_specialist.py
+
+  full-historical-replay:
+    needs: contract-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-vn1-specialists.txt
+      - name: Install existing pinned specialist dependencies
+        run: python -m pip install -r requirements-vn1-specialists.txt
+      - name: Run full-catalogue seasonal SKU comparison against PR21 incumbent
+        run: |
+          python -u vn1_sku_seasonal_specialist.py --data-dir . \
+            --output results/vn1-sku-seasonal/historical.json \
+            --trees 160 --activity-trees 100 --client-cap 16
+      - name: Validate fixed acceptance gate and no Phase 1/2 labels
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("results/vn1-sku-seasonal/historical.json").read_text())
+          assert r["training_origins"] == [118,131,144]
+          assert r["holdout_origin"] == 157
+          assert r["baseline"] == "PR21 group_unscaled25 persistent-bias specialist"
+          assert r["used_phase1_labels"] is False
+          assert r["used_phase2_labels"] is False
+          assert {x for x in r["candidate_policies"]} == {"incumbent","sku_annual10","sku_peer10","sku_hybrid15"}
+          w=r["winner_training_only"]
+          s=r["training_scores"]
+          h=r["holdout_scores"]
+          wins=r["training_fold_wins"]
+          accepted=(w!="incumbent" and s[w] <= s["incumbent"]-0.001
+                    and h[w] <= h["incumbent"]-0.001 and wins[w]>=2)
+          assert r["accepted"] is bool(accepted)
+          assert r["selected"] == (w if accepted else "incumbent")
+          print("VN1_SKU_SEASONAL_HISTORICAL_GATE=PASS")
+          print("CURRENT_INCUMBENT_TRAIN",s["incumbent"])
+          print("CURRENT_INCUMBENT_HOLDOUT",h["incumbent"])
+          print("BEST_TRAIN_POLICY",w, s[w])
+          print("ACCEPTED",r["accepted"],"SELECTED",r["selected"])
+          PY
+      - name: Upload aggregate research score receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vn1-sku-seasonal-historical-scores
+          path: results/vn1-sku-seasonal/historical.json
+          retention-days: 14
+          if-no-files-found: warn
