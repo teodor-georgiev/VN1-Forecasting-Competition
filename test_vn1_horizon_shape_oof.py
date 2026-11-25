@@ -65,3 +65,28 @@ def test_historical_gate_rejects_later_regression(monkeypatch):
     assert not result["accepted"]
     assert result["selected"] == "incumbent"
     assert not result["used_phase2_labels"]
+
+
+def test_calendar_uses_matching_observed_weeks_and_shrinks_groups():
+    h, p, records = fixture()
+    # A seasonal demand peak one and two years before the forecast origin.
+    h.iloc[0, 3+131-52+5] = 100000.0
+    h.iloc[0, 3+131-104+5] = 100000.0
+    y = v.base._history_matrix(h)
+    shares = v._calendar_shares(h, y)
+    np.testing.assert_allclose(shares.sum(axis=1), 1.0)
+    assert np.argmax(shares[0]) == 5
+    result = v.candidate_forecasts(h, p, records)
+    assert result["calendar30"][0, 5] > result["calendar15"][0, 5] > p[0, 5]
+    np.testing.assert_allclose(result["calendar30"].sum(axis=1), p.sum(axis=1))
+    np.testing.assert_array_equal(result["calendar30"][3:], p[3:])
+    # No observed matched demand means no artificial seasonal profile.
+    assert v._calendar_shares(h, np.zeros_like(y)) is None
+
+
+def test_calendar_can_redistribute_into_zero_week_without_increasing_total():
+    h, p, records = fixture()
+    p[0, 0] = 0.
+    result = v.candidate_forecasts(h, p, records)
+    assert result["calendar30"][0, 0] > 0.
+    np.testing.assert_allclose(result["calendar30"].sum(axis=1), p.sum(axis=1))
