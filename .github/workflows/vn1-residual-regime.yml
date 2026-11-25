@@ -37,6 +37,11 @@ jobs:
 
   historical-rolling:
     needs: unit
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        lane: [catboost25, lead_lgbm25, regime_experts, intermittent25]
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
@@ -53,12 +58,12 @@ jobs:
       - name: Full-catalog Phase 0 chronological specialist comparison
         run: |
           python -u vn1_residual_regime_matrix.py --data-dir . \
-            --output results/vn1-residual-regime/historical.json
+            --lane ${{ matrix.lane }} --output results/vn1-residual-regime/${{ matrix.lane }}.json
       - name: Archive aggregate scores, never per-series forecasts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: vn1-residual-regime-phase0-aggregate
-          path: results/vn1-residual-regime/historical.json
+          name: vn1-residual-regime-${{ matrix.lane }}
+          path: results/vn1-residual-regime/${{ matrix.lane }}.json
           if-no-files-found: error
           retention-days: 14
