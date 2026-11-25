@@ -17,7 +17,7 @@ import vn1_champion_residual_oof as base
 import vn1_persistent_bias_specialist as persistent
 from vn1_from_scratch import HORIZON, KEYS, read_sales
 
-POLICIES = ("incumbent", "global15", "group15", "group30")
+POLICIES = ("incumbent", "global15", "group15", "group30", "calendar15", "calendar30")
 MIN_GAIN = 0.001
 
 
@@ -38,6 +38,37 @@ def _shape_rate(pred, actual, codes, prior):
         p += np.where(valid, fp, 0.0)
         a += ft * scale
     return np.clip((a - p) / (p + prior), -0.30, 0.30)[codes]
+
+
+def _calendar_shares(history, y):
+    """Calendar-aligned group demand shares using two already observed years.
+
+    Shrink client and warehouse profiles toward the catalogue profile.
+    Return None if no matched historical demand exists.
+    """
+    n, cutoff = y.shape
+    matched = [y[:, cutoff-lag:cutoff-lag+HORIZON]
+               for lag in (52, 104) if cutoff >= lag]
+    if not matched:
+        return None
+    # Weekly inputs are chronological at 7-day intervals; 52-week lag
+    # matches seasonal weeks rather than exact month/day.
+    demand = np.sum(matched, axis=0)
+    global_week = demand.sum(axis=0)
+    if global_week.sum() <= 0:
+        return None
+    global_share = global_week / global_week.sum()
+    profiles = []
+    for key in ("Client", "Warehouse"):
+        codes, _ = pd.factorize(history[key], sort=True)
+        if (codes < 0).any():
+            raise ValueError("Missing group key")
+        group = np.zeros((int(codes.max()) + 1, HORIZON))
+        np.add.at(group, codes, demand)
+        # 2,500 pseudo-units distributed as the global seasonal profile.
+        shares = (group + 2500.0 * global_share) / (group.sum(axis=1, keepdims=True) + 2500.0)
+        profiles.append(shares[codes])
+    return 0.5 * global_share + 0.25 * (profiles[0] + profiles[1])
 
 
 def candidate_forecasts(history, incumbent, records):
@@ -84,6 +115,20 @@ def candidate_forecasts(history, incumbent, records):
             raise ArithmeticError("Invalid candidate")
         if not np.allclose(candidate.sum(axis=1), control.sum(axis=1), atol=1e-7, rtol=1e-10):
             raise ArithmeticError("Series horizon totals changed")
+        if not np.array_equal(candidate[~active], control[~active]):
+            raise ArithmeticError("Inactive forecast changed")
+        choices[name] = candidate
+    calendar = _calendar_shares(history, y)
+    for name, weight in (("calendar15", .15), ("calendar30", .30)):
+        candidate = control.copy()
+        if calendar is not None:
+            totals = control[active].sum(axis=1, keepdims=True)
+            candidate[active] = ((1.0 - weight) * control[active]
+                                 + weight * totals * calendar[active])
+        if not np.isfinite(candidate).all() or (candidate < 0).any():
+            raise ArithmeticError("Invalid calendar candidate")
+        if not np.allclose(candidate.sum(axis=1), control.sum(axis=1), atol=1e-7, rtol=1e-10):
+            raise ArithmeticError("Calendar candidate changed series totals")
         if not np.array_equal(candidate[~active], control[~active]):
             raise ArithmeticError("Inactive forecast changed")
         choices[name] = candidate
