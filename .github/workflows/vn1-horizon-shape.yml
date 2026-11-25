@@ -53,8 +53,7 @@ jobs:
       - name: Full-catalog Phase 0 chronological specialist comparison
         run: |
           python -u vn1_horizon_shape_oof.py --data-dir . \
-            --output results/vn1-horizon-shape/historical.json \
-           
+            --output results/vn1-horizon-shape/historical.json
       - name: Archive aggregate scores, never per-series forecasts
         if: success()
         uses: actions/upload-artifact@v4
