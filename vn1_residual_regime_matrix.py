@@ -13,6 +13,15 @@ from vn1_from_scratch import HORIZON, KEYS, read_sales
 
 POLICIES = ("incumbent", "catboost25", "lead_lgbm25", "regime_experts", "intermittent25")
 MIN_GAIN = 0.001
+LANES = POLICIES[1:]
+
+
+def _policies(lane):
+    if lane == "all":
+        return POLICIES
+    if lane not in LANES:
+        raise ValueError("Unknown research lane")
+    return ("incumbent", lane)
 
 
 def _cat_features(frame):
@@ -22,23 +31,26 @@ def _cat_features(frame):
     return x
 
 
-def _residual_models(records, X):
+def _residual_models(records, X, policies=POLICIES):
     train = pd.concat([r["X"] for r in records], ignore_index=True)
     labels = np.concatenate([r["residual"] for r in records])
-    model = CatBoostRegressor(iterations=120, depth=5, learning_rate=.05,
-        loss_function="MAE", l2_leaf_reg=5, random_seed=2026, thread_count=2,
-        verbose=False, allow_writing_files=False)
-    model.fit(_cat_features(train), labels, cat_features=["Client", "Warehouse"])
-    cat = model.predict(_cat_features(X))
+    cat = np.zeros(len(X))
     lead = np.zeros(len(X))
-    for low, high in ((1, 4), (5, 9), (10, 13)):
-        tr = train["horizon"].between(low, high).to_numpy()
-        te = X["horizon"].between(low, high).to_numpy()
-        if tr.sum() < 100:
-            continue
-        model = lgb.LGBMRegressor(**base.PARAMS)
-        model.fit(train.loc[tr], labels[tr], categorical_feature=["Client", "Warehouse"])
-        lead[te] = model.predict(X.loc[te])
+    if "catboost25" in policies:
+        model = CatBoostRegressor(iterations=120, depth=5, learning_rate=.05,
+            loss_function="MAE", l2_leaf_reg=5, random_seed=2026, thread_count=2,
+            verbose=False, allow_writing_files=False)
+        model.fit(_cat_features(train), labels, cat_features=["Client", "Warehouse"])
+        cat = model.predict(_cat_features(X))
+    if "lead_lgbm25" in policies:
+        for low, high in ((1, 4), (5, 9), (10, 13)):
+            tr = train["horizon"].between(low, high).to_numpy()
+            te = X["horizon"].between(low, high).to_numpy()
+            if tr.sum() < 100:
+                continue
+            model = lgb.LGBMRegressor(**base.PARAMS)
+            model.fit(train.loc[tr], labels[tr], categorical_feature=["Client", "Warehouse"])
+            lead[te] = model.predict(X.loc[te])
     return cat.reshape(-1, HORIZON), lead.reshape(-1, HORIZON)
 
 
@@ -98,7 +110,7 @@ def _conserve(proposed, control, mask):
     return out
 
 
-def candidate_forecasts(history, incumbent, records, *, original_champion=None):
+def candidate_forecasts(history, incumbent, records, *, original_champion=None, lane="all"):
     y = base._history_matrix(history)
     n, cutoff = y.shape
     control = np.asarray(incumbent, dtype=float)
@@ -112,41 +124,43 @@ def candidate_forecasts(history, incumbent, records, *, original_champion=None):
         p, a = np.asarray(r["champion"]), np.asarray(r["truth"])
         if p.shape != control.shape or not np.isfinite(p).all() or (p<0).any() or not np.array_equal(a,y[:,o:o+HORIZON]):
             raise ValueError("Invalid OOF truth or forecast")
-    # Residual labels refer to original champion. Derive features from the
-    # same original forecast, not the already corrected incumbent.
-    # Current original champion is supplied by the historical runner below.
-    original = original_champion
-    if original is None:
-        raise ValueError("Missing current original champion for residual features")
-    X = base._regression_features(history, original)
-    cat, lead = _residual_models(records, X)
+    policies = _policies(lane)
     active = base._active_mask(y)
     cap = np.maximum(3., 2*y[:, -13:].mean(axis=1))[:, None]
-    regime = _regimes(y)
-    experts = _experts(y)
-    weights = _weights(y, records)
-    proposal = control.copy()
-    for k in range(4):
-        if weights[k]:
-            m = regime == k
-            proposal[m] = .75*control[m] + .25*experts[weights[k]-1][m]
-    sparse = regime == 3
-    return {
-        "incumbent": control.copy(),
-        "catboost25": _conserve(control + .25*np.clip(cat,-cap,cap), control, active),
-        "lead_lgbm25": _conserve(control + .25*np.clip(lead,-cap,cap), control, active),
-        "regime_experts": _conserve(proposal, control, regime < 4),
-        "intermittent25": _conserve(.75*control+.25*experts[2], control, sparse),
-    }
+    result = {"incumbent": control.copy()}
+    if any(k in policies for k in ("catboost25", "lead_lgbm25")):
+        if original_champion is None:
+            raise ValueError("Missing current original champion for residual features")
+        X = base._regression_features(history, original_champion)
+        cat, lead = _residual_models(records, X, policies)
+        if "catboost25" in policies:
+            result["catboost25"] = _conserve(control + .25*np.clip(cat,-cap,cap), control, active)
+        if "lead_lgbm25" in policies:
+            result["lead_lgbm25"] = _conserve(control + .25*np.clip(lead,-cap,cap), control, active)
+    if any(k in policies for k in ("regime_experts", "intermittent25")):
+        regime = _regimes(y)
+        experts = _experts(y)
+        if "regime_experts" in policies:
+            weights = _weights(y, records)
+            proposal = control.copy()
+            for k in range(4):
+                if weights[k]:
+                    m = regime == k
+                    proposal[m] = .75*control[m] + .25*experts[weights[k]-1][m]
+            result["regime_experts"] = _conserve(proposal, control, regime < 4)
+        if "intermittent25" in policies:
+            result["intermittent25"] = _conserve(.75*control+.25*experts[2], control, regime == 3)
+    return result
 
 
-def historical_validation(phase0, *, trees=160, activity_trees=100, client_cap=16):
+def historical_validation(phase0, *, trees=160, activity_trees=100, client_cap=16, lane="all"):
+    policies = _policies(lane)
     y = base._history_matrix(phase0)
     if y.shape[1] < base.HOLDOUT_ORIGIN + HORIZON:
         raise ValueError("Incomplete historical holdout")
     cache, fold_scores = {}, {}
-    totals = {k: np.zeros(2) for k in POLICIES}
-    wins = dict.fromkeys(POLICIES, 0)
+    totals = {k: np.zeros(2) for k in policies}
+    wins = dict.fromkeys(policies, 0)
     demand = 0.0
     for origin in (*base.TRAIN_EVAL_ORIGINS, base.HOLDOUT_ORIGIN):
         past = phase0.iloc[:, :len(KEYS)+origin].copy()
@@ -154,7 +168,7 @@ def historical_validation(phase0, *, trees=160, activity_trees=100, client_cap=1
         records = base._completed_records(phase0, origin, cache, **options)
         original, _ = base.champion_forecast(past, **options)
         incumbent = persistent.candidate_forecasts(past, original, records)[0]["group_unscaled25"]
-        forecasts = candidate_forecasts(past, incumbent, records, original_champion=original)
+        forecasts = candidate_forecasts(past, incumbent, records, original_champion=original, lane=lane)
         truth = y[:, origin:origin+HORIZON]
         volume = float(truth.sum())
         if volume <= 0:
@@ -173,12 +187,12 @@ def historical_validation(phase0, *, trees=160, activity_trees=100, client_cap=1
         print("VN1_RESIDUAL_REGIME_FOLD=" + str(origin), flush=True)
     train = {k: float((v[0]+abs(v[1]))/demand) for k, v in totals.items()}
     holdout = fold_scores[str(base.HOLDOUT_ORIGIN)]
-    winner = min(POLICIES, key=train.__getitem__)
+    winner = min(policies, key=train.__getitem__)
     accepted = bool(winner != "incumbent" and
                     train[winner] <= train["incumbent"] - MIN_GAIN and
                     holdout[winner] <= holdout["incumbent"] - MIN_GAIN and
                     wins[winner] >= 2)
-    return {"incumbent": "PR21 group_unscaled25", "series": len(y), "horizon": HORIZON,
+    return {"lane": lane, "incumbent": "PR21 group_unscaled25", "series": len(y), "horizon": HORIZON,
             "training_origins": list(base.TRAIN_EVAL_ORIGINS), "holdout_origin": base.HOLDOUT_ORIGIN,
             "training_scores": train, "holdout_scores": holdout, "fold_scores": fold_scores,
             "training_winner": winner, "train_fold_wins": wins, "accepted": accepted,
@@ -191,13 +205,14 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data-dir", type=Path, default=Path("."))
     p.add_argument("--output", type=Path, required=True)
+    p.add_argument("--lane", choices=("all", *LANES), default="all")
     args = p.parse_args()
     if args.output.exists():
         raise FileExistsError("Refusing to overwrite a research receipt")
     phase0 = read_sales(args.data_dir / "Phase 0 - Sales.csv")
     if len(phase0) != 15053:
         raise ValueError("Full VN1 catalogue required")
-    receipt = historical_validation(phase0)
+    receipt = historical_validation(phase0, lane=args.lane)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True)+"\n")
     print("VN1_RESIDUAL_REGIME_RESULT=" + json.dumps(receipt, sort_keys=True), flush=True)

@@ -43,3 +43,29 @@ def test_completed_oof_matrix_preserves_inactive_and_total(monkeypatch):
         np.testing.assert_allclose(q.sum(axis=0),p.sum(axis=0))
         np.testing.assert_array_equal(q[-1],p[-1])
         assert (q>=0).all()
+
+
+def test_independent_lane_parity_and_no_unrelated_fit(monkeypatch):
+    h = history(40,131)
+    y = v.base._history_matrix(h)
+    p = np.full((40,13),10.)
+    records = [{"origin":118,"champion":p,"truth":y[:,118:131]}]
+    calls = []
+    monkeypatch.setattr(v.base,"_regression_features",lambda *a: None)
+    def fake(records, X, policies):
+        calls.append(tuple(policies))
+        return p.copy(),-p.copy()
+    monkeypatch.setattr(v,"_residual_models",fake)
+    all_results = v.candidate_forecasts(h,p,records,original_champion=p)
+    calls.clear()
+    for lane in v.LANES:
+        before = len(calls)
+        isolated = v.candidate_forecasts(h,p,records,original_champion=p,lane=lane)
+        assert tuple(isolated) == ("incumbent", lane)
+        np.testing.assert_allclose(isolated[lane],all_results[lane])
+        if lane in ("catboost25","lead_lgbm25"):
+            assert calls[-1] == ("incumbent",lane)
+        else:
+            assert len(calls) == before
+    with pytest.raises(ValueError,match="Unknown"):
+        v._policies("arbitrary")
