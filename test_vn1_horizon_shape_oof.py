@@ -65,3 +65,26 @@ def test_historical_gate_rejects_later_regression(monkeypatch):
     assert not result["accepted"]
     assert result["selected"] == "incumbent"
     assert not result["used_phase2_labels"]
+
+
+def test_l1_optimizer_reduces_completed_oof_error_and_preserves_total():
+    p = np.full((4, 13), 1000.)
+    a = p.copy()
+    a[:, 0] += 200.
+    a[:, 1] -= 200.
+    shape = v._fit_l1_shape([p], [a], np.zeros(4, dtype=int), [np.ones(4, dtype=bool)])
+    modified = v._apply_log_shape(p, shape)
+    assert np.abs(modified-a).sum() < np.abs(p-a).sum()
+    np.testing.assert_allclose(modified.sum(axis=1), p.sum(axis=1))
+    assert np.abs(shape).max() <= .25
+    assert modified[0, 0] > p[0, 0] > modified[0, 1]
+
+
+def test_l1_no_active_oof_or_zero_forecast_is_identity():
+    p = np.full((2, 13), 10.)
+    a = p.copy()
+    a[:, 0] += 10.
+    empty = np.zeros(2, dtype=bool)
+    shape = v._fit_l1_shape([p], [a], np.zeros(2, dtype=int), [empty])
+    np.testing.assert_array_equal(shape, np.zeros_like(p))
+    np.testing.assert_array_equal(v._apply_log_shape(np.zeros_like(p), shape), np.zeros_like(p))

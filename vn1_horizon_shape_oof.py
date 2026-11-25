@@ -17,7 +17,7 @@ import vn1_champion_residual_oof as base
 import vn1_persistent_bias_specialist as persistent
 from vn1_from_scratch import HORIZON, KEYS, read_sales
 
-POLICIES = ("incumbent", "global15", "group15", "group30")
+POLICIES = ("incumbent", "global15", "group15", "group30", "l1_global", "l1_group")
 MIN_GAIN = 0.001
 
 
@@ -40,6 +40,62 @@ def _shape_rate(pred, actual, codes, prior):
     return np.clip((a - p) / (p + prior), -0.30, 0.30)[codes]
 
 
+def _apply_log_shape(forecast, log_shape):
+    """Reallocate existing volume with bounded multiplicative week weights."""
+    modified = forecast * np.exp(log_shape)
+    total = forecast.sum(axis=1, keepdims=True)
+    after = modified.sum(axis=1, keepdims=True)
+    return modified * np.divide(total, after, out=np.ones_like(total), where=after > 0)
+
+
+def _fit_l1_shape(pred, actual, codes, masks):
+    """Fit low-capacity log-week factors to completed OOF absolute errors.
+
+    Gradients include the derivative of per-SKU normalization. A fixed
+    bound and backtracking reject steps increasing the penalized OOF loss.
+    """
+    groups = int(codes.max()) + 1
+    shape = np.zeros((groups, HORIZON))
+    volume = np.zeros(groups)
+    for forecast, mask in zip(pred, masks):
+        np.add.at(volume, codes[mask], forecast[mask].sum(axis=1))
+    denom = volume[:, None] + 2500.0
+    penalty = 0.05 * denom
+
+    def evaluate(theta, gradient=False):
+        loss = float((penalty * theta**2).sum())
+        grad = 2.0 * penalty * theta
+        for forecast, truth, mask in zip(pred, actual, masks):
+            c = codes[mask]
+            p = _apply_log_shape(forecast[mask], theta[c])
+            err = p - truth[mask]
+            loss += float(np.abs(err).sum())
+            if gradient:
+                sign = np.sign(err)
+                row_total = p.sum(axis=1, keepdims=True)
+                center = np.divide((p * sign).sum(axis=1, keepdims=True),
+                                   row_total, out=np.zeros_like(row_total),
+                                   where=row_total > 0)
+                np.add.at(grad, c, p * (sign - center))
+        return loss, grad
+
+    initial, _ = evaluate(shape)
+    for _ in range(8):
+        loss, grad = evaluate(shape, gradient=True)
+        for step in (1.0, 0.5, 0.25, 0.125):
+            proposed = np.clip(shape - step * grad / denom, -0.25, 0.25)
+            next_loss, _ = evaluate(proposed)
+            if next_loss < loss - 1e-9:
+                shape = proposed
+                break
+        else:
+            break
+    final, _ = evaluate(shape)
+    if final > initial + 1e-7:
+        raise ArithmeticError("OOF objective increased")
+    return shape[codes]
+
+
 def candidate_forecasts(history, incumbent, records):
     y = base._history_matrix(history)
     n, cutoff = y.shape
@@ -51,7 +107,7 @@ def candidate_forecasts(history, incumbent, records):
         raise ValueError("Need unique chronological completed OOF records")
     if any(o < base.OOF_START or o + HORIZON > cutoff for o in origins):
         raise ValueError("OOF contains future labels")
-    preds, actuals = [], []
+    preds, actuals, masks = [], [], []
     for record in records[-3:]:
         p, a = (np.asarray(record[k], dtype=np.float64) for k in ("champion", "truth"))
         if any(x.shape != control.shape or not np.isfinite(x).all() or (x < 0).any() for x in (p, a)):
@@ -62,6 +118,7 @@ def candidate_forecasts(history, incumbent, records):
             raise ValueError("OOF truth differs from completed history")
         preds.append(p)
         actuals.append(a)
+        masks.append(base._active_mask(y[:, :o]))
     global_rate = _shape_rate(preds, actuals, np.zeros(n, dtype=int), 2500.0)
     group_rates = []
     for key in ("Client", "Warehouse"):
@@ -84,6 +141,23 @@ def candidate_forecasts(history, incumbent, records):
             raise ArithmeticError("Invalid candidate")
         if not np.allclose(candidate.sum(axis=1), control.sum(axis=1), atol=1e-7, rtol=1e-10):
             raise ArithmeticError("Series horizon totals changed")
+        if not np.array_equal(candidate[~active], control[~active]):
+            raise ArithmeticError("Inactive forecast changed")
+        choices[name] = candidate
+    global_shape = _fit_l1_shape(preds, actuals, np.zeros(n, dtype=int), masks)
+    group_shapes = []
+    for key in ("Client", "Warehouse"):
+        codes, _ = pd.factorize(history[key], sort=True)
+        group_shapes.append(_fit_l1_shape(preds, actuals, codes, masks))
+    group_shape = 0.5 * global_shape + 0.25 * (group_shapes[0] + group_shapes[1])
+    for name, shape in (("l1_global", global_shape), ("l1_group", group_shape)):
+        candidate = control.copy()
+        # Fixed 50% shrinkage toward the existing champion after OOF fitting.
+        candidate[active] = _apply_log_shape(control[active], 0.5 * shape[active])
+        if not np.isfinite(candidate).all() or (candidate < 0).any():
+            raise ArithmeticError("Invalid L1 candidate")
+        if not np.allclose(candidate.sum(axis=1), control.sum(axis=1), atol=1e-7, rtol=1e-10):
+            raise ArithmeticError("L1 candidate changed series totals")
         if not np.array_equal(candidate[~active], control[~active]):
             raise ArithmeticError("Inactive forecast changed")
         choices[name] = candidate
